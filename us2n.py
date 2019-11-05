@@ -6,9 +6,118 @@ import select
 import socket
 import machine
 import network
+import re
+from machine import Timer
 
 print_ = print
 VERBOSE = 1
+
+class Simulate:
+
+    flagSendData = 0
+    inFile = None
+    timer = None
+    expr = None
+    inFileName = None
+
+    bridge = None
+
+    simrun = 0
+    linecount = 0
+    logfile = None
+
+    flagSimRun = 0
+
+
+
+    def log(self, message):
+        try:
+            if self.logfile is None:
+                self.logfile = open('/log.txt', 'a+')
+
+            if self.logfile is None:
+                return
+
+            self.logfile.write(str(time.ticks_ms() / 60000) + ':' + message + '\r\n')
+        except Exception:
+            print('Failed to open log file')
+
+
+    def __init__(self, config):
+        self.inFileName = config.setdefault('simdata', 'ecu.data')
+        print("Simulation File Name: {0}", self.inFileName)
+
+    def setSendData(self, timer):
+        self.flagSendData = 1
+
+    def startSimulator(self, bridge):
+        if(self.inFileName == None):
+            print("Simulation data file name not found")
+            return
+
+        self.bridge = bridge
+
+        self.inFile = open(self.inFileName, 'r')
+        if(self.inFile is None):
+            print("Simulation data file not found")
+
+        self.expr = re.compile(',')
+
+        if(self.timer == None):
+            self.timer = Timer(-1)
+
+        self.simrun += 1
+
+        if self.bridge.client is not None:
+            self.bridge.client.sendall('Simulation Run Started: ' + str(self.simrun))
+
+        self.log('Simulation Run Started: ' + str(self.simrun))
+
+        self.timer.init(period=50, mode=Timer.PERIODIC, callback=self.setSendData)
+
+    def stopSimulator(self):
+        if(self.timer != None):
+            self.timer.deinit()
+
+        self.timer = None
+
+
+    def reRunSimulator(self):
+        self.inFile.seek(0, 0)
+
+        self.log('Simulation Run End, Line Count: ' + str(self.linecount))
+        self.simrun += 1
+        self.linecount = 0
+
+        if self.bridge.client is not None:
+            self.bridge.client.sendall('Simulation Run Started: ' + str(self.simrun) + '\r\n')
+        self.log('Simulation Run Started: ' + str(self.simrun))
+
+
+    def sendData(self):
+        if self.flagSendData == 0:
+            return
+
+        if(self.inFile is None):
+            return
+
+        line = self.inFile.readline(100)
+
+        #print('X:' + line) #debug
+
+        if(line == ''):
+            self.reRunSimulator()
+            return
+
+        self.linecount += 1
+        data = self.expr.split(line)
+
+        if(data):
+            print(data[0] + ':' + data[1] + ':' + data[2] + ':' + str(time.ticks_ms()))
+
+        self.flagSendData = 0
+
+
 def print(*args, **kwargs):
     if VERBOSE:
         print_(*args, **kwargs)
@@ -38,12 +147,13 @@ def UART(config):
     port = config.pop('port')
     uart = machine.UART(port)
     uart.init(**config)
+    #uart.init(921000, bits=8, parity=None, stop=1)
     return uart
 
 
 class Bridge:
 
-    def __init__(self, config):
+    def __init__(self, config, simulator):
         super().__init__()
         self.config = config
         self.uart = None
@@ -53,6 +163,7 @@ class Bridge:
         self.bind_port = self.address[1]
         self.client = None
         self.client_address = None
+        self.simulator = simulator
 
     def bind(self):
         tcp = socket.socket()
@@ -64,6 +175,20 @@ class Bridge:
               .format(self.bind_port, self.uart_port))
         self.tcp = tcp
         return tcp
+
+    def process_command(self, data):
+    
+        if data.find('|S') != -1:
+            self.simulator.flagSimRun = 1
+            print("flagSimRun = 1")
+            return True
+        elif data.find('|T') != -1:
+            print("flagSimRun = 0")
+            self.simulator.flagSimRun = 0
+            return True
+
+        return False
+
 
     def fill(self, fds):
         if self.uart is not None:
@@ -81,9 +206,11 @@ class Bridge:
         elif fd == self.client:
             data = self.client.recv(4096)
             if data:
-                print('TCP({0})->UART({1}) {2}'.format(self.bind_port,
-                                                       self.uart_port, data))
-                self.uart.write(data)
+                print('TCP({0})->UART({1}) {2}'.format(self.bind_port, self.uart_port, data))
+
+                if(self.process_command(str(data)) == False):
+                        self.uart.write(data)
+
             else:
                 print('Client ', self.client_address, ' disconnected')
                 self.close_client()
@@ -105,6 +232,7 @@ class Bridge:
 
     def open_client(self):
         self.uart = UART(self.config['uart'])
+        print(self.uart)
         self.client, self.client_address = self.tcp.accept()
         print('Accepted connection from ', self.client_address)
 
@@ -118,10 +246,13 @@ class Bridge:
 
 class S2NServer:
 
+    simulator = None
+
     def __init__(self, config):
         self.config = config
+        self.simulator = Simulate(config)
 
-    def serve_forever(self):
+    def serve(self):
         try:
             self._serve_forever()
         except KeyboardInterrupt:
@@ -130,7 +261,7 @@ class S2NServer:
     def bind(self):
         bridges = []
         for config in self.config['bridges']:
-            bridge = Bridge(config)
+            bridge = Bridge(config, self.simulator)
             bridge.bind()
             bridges.append(bridge)
         return bridges
@@ -138,21 +269,30 @@ class S2NServer:
     def _serve_forever(self):
         bridges = self.bind()
 
+        self.simulator.startSimulator(bridges[0])
+
         try:
             while True:
                 fds = []
                 for bridge in bridges:
                     bridge.fill(fds)
-                rlist, _, xlist = select.select(fds, (), fds)
+                rlist, _, xlist = select.select(fds, (), fds, 0.005)
+
+                if self.simulator.flagSimRun == 1:
+                    self.simulator.sendData()
+
                 if xlist:
                     print('Errors. bailing out')
                     continue
-                for fd in rlist:
-                    for bridge in bridges:
-                        bridge.handle(fd)
+                if rlist:
+                    for fd in rlist:
+                        for bridge in bridges:
+                            bridge.handle(fd)
         finally:
             for bridge in bridges:
                 bridge.close()
+
+            self.simulator.stopSimulator()
 
 
 def config_lan(config, name):

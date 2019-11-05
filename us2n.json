@@ -1,0 +1,23 @@
+{
+	"name": "SuperESP32",
+	"verbose": 1,
+	"simdata": "ecu.small",
+	"wlan": {
+		"sta": {
+			"essid": "Lokhandwala",
+			"password": "sledgehammer"
+		}
+	},
+	"bridges": [{
+		"tcp": {
+			"bind": ["", 8000]
+		},
+		"uart": {
+			"port": 2,
+			"baudrate": 921000,
+			"bits": 8,
+			"parity": null,
+			"stop": 1
+		}
+	}]
+}
