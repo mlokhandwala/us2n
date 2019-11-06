@@ -8,11 +8,30 @@ import machine
 import network
 import re
 from machine import Timer
+from machine import ADC, Pin
 
 print_ = print
 VERBOSE = 1
 
-class Simulate:
+
+class Temperature:
+    
+    def __init__(self):
+        self.adcP1 = ADC(Pin(33))          # create ADC object on ADC pin
+        self.adcP1.atten(ADC.ATTN_11DB)    # set 11dB input attenuation (voltage range roughly 0.0v - 3.6v)
+        self.adcP1.width(ADC.WIDTH_12BIT)   # set 9 bit return values (returned range 0-511)
+
+    def getTemperature(self):
+        raw = self.adcP1.read()
+        voltage = (raw / 1.13) # from observation & calculation. 290mV gives 240 reading but 1.5V gives 1700 reading. 4096 / 3600 also = 1.13 so using that
+        tempC = voltage * 0.1
+        
+        return tempC
+
+tempsensor = Temperature()
+
+
+class Simulator:
 
     flagSendData = 0
     inFile = None
@@ -28,7 +47,8 @@ class Simulate:
 
     flagSimRun = 0
 
-
+    server = None
+    
 
     def log(self, message):
         try:
@@ -44,6 +64,7 @@ class Simulate:
 
 
     def __init__(self, config):
+        self.server = server
         self.inFileName = config.setdefault('simdata', 'ecu.data')
         print("Simulation File Name: {0}", self.inFileName)
 
@@ -95,27 +116,43 @@ class Simulate:
 
 
     def sendData(self):
-        if self.flagSendData == 0:
-            return
+        try:
+            if self.flagSendData == 0:
+                return
 
-        if(self.inFile is None):
-            return
+            if(self.inFile is None):
+                return
 
-        line = self.inFile.readline(100)
+            line = self.inFile.readline(100)
 
-        #print('X:' + line) #debug
+            #print('X:' + line) #debug
 
-        if(line == ''):
-            self.reRunSimulator()
-            return
+            if(line == ''):
+                self.reRunSimulator()
+                return
 
-        self.linecount += 1
-        data = self.expr.split(line)
+            self.linecount += 1
+            data = self.expr.split(line)
 
-        if(data):
-            print(data[0] + ':' + data[1] + ':' + data[2] + ':' + str(time.ticks_ms()))
+            if(data):
+                nRpm = int(data[0])
+                nSpeed = int(data[1])
+                nBreak = int(data[2])
+                
+                if nRpm < 0 or nRpm > 7000 or nSpeed < 0 or nSpeed > 200 or nBreak < 0 or nBreak > 1:
+                    return # Bad data, try again since we are not resetting the flag.
+                    
+                print("{:04d}:{:03d}:{:01d}:{}".format(nRpm, nSpeed, nBreak, str(time.ticks_ms())))
+                command = ("`{:04d} {:03d} {:01d} ".format(nRpm, nSpeed, nBreak)) # space between fields to allow placing null to split string in recieving code. 
+                print(command)
+                
+                self.bridge.uart.write(command)
 
-        self.flagSendData = 0
+            self.flagSendData = 0
+        except Exception as e: # most likely due to conversion error in data
+            print(str(e))
+            self.log(str(e)) 
+        
 
 
 def print(*args, **kwargs):
@@ -152,6 +189,8 @@ def UART(config):
 
 
 class Bridge:
+
+    simulator = None
 
     def __init__(self, config, simulator):
         super().__init__()
@@ -200,26 +239,33 @@ class Bridge:
         return fds
 
     def handle(self, fd):
-        if fd == self.tcp:
-            self.close_client()
-            self.open_client()
-        elif fd == self.client:
-            data = self.client.recv(4096)
-            if data:
-                print('TCP({0})->UART({1}) {2}'.format(self.bind_port, self.uart_port, data))
-
-                if(self.process_command(str(data)) == False):
-                        self.uart.write(data)
-
-            else:
-                print('Client ', self.client_address, ' disconnected')
+        try:
+            if fd == self.tcp:
                 self.close_client()
-        elif fd == self.uart:
-            data = self.uart.read()
-            print('UART({0})->TCP({1}) {2}'.format(self.uart_port,
-                                                   self.bind_port, data))
-            self.client.sendall(data)
+                self.open_client()
+            elif fd == self.client:
+                data = self.client.recv(4096)
+                if data:
+                    print('TCP({0})->UART({1}) {2}'.format(self.bind_port, self.uart_port, data))
 
+                    if(self.process_command(str(data)) == False):
+                            self.uart.write(data)
+
+                else:
+                    print('Client ', self.client_address, ' disconnected')
+                    self.close_client()
+            elif fd == self.uart:
+                data = self.uart.read()
+                print('UART({0})->TCP({1}) {2}'.format(self.uart_port,
+                                                       self.bind_port, data))
+                self.client.sendall("{}[{:3.2f}]\n\r".format(data, tempsensor.getTemperature()))
+                #self.client.sendall(data)
+        except Exception as e:
+            print(str(e))
+            self.client.sendall(str(e))
+            self.simulator.log(str(e))
+            
+             
     def close_client(self):
         if self.client is not None:
             print('Closing client ', self.client_address)
@@ -250,7 +296,7 @@ class S2NServer:
 
     def __init__(self, config):
         self.config = config
-        self.simulator = Simulate(config)
+        self.simulator = Simulator(config)
 
     def serve(self):
         try:
