@@ -13,6 +13,8 @@ from machine import ADC, Pin
 print_ = print
 VERBOSE = 1
 
+gEnterCommandMode = 'XXXXXXXXXXX'
+
 
 class Temperature:
     
@@ -114,6 +116,11 @@ class Simulator:
             self.bridge.client.sendall('Simulation Run Started: ' + str(self.simrun) + '\r\n')
         self.log('Simulation Run Started: ' + str(self.simrun))
 
+    def slowSendData(self, text):
+        for c in text:
+            self.bridge.uart.write(c)
+            time.sleep_ms(1) # Delay 1 ms to avoid overrun
+
 
     def sendData(self):
         try:
@@ -146,7 +153,7 @@ class Simulator:
                 command = ("`{:04d} {:03d} {:01d} ".format(nRpm, nSpeed, nBreak)) # space between fields to allow placing null to split string in recieving code. 
                 print(command)
                 
-                self.bridge.uart.write(command)
+                self.slowSendData(command)
 
             self.flagSendData = 0
         except Exception as e: # most likely due to conversion error in data
@@ -218,6 +225,7 @@ class Bridge:
     def process_command(self, data):
     
         if data.find('|S') != -1:
+            self.simulator.slowSendData(gEnterCommandMode)
             self.simulator.flagSimRun = 1
             print("flagSimRun = 1")
             return True
