@@ -9,6 +9,7 @@ import network
 import re
 from machine import Timer
 from machine import ADC, Pin
+import machine
 
 print_ = print
 VERBOSE = 1
@@ -36,6 +37,7 @@ tempsensor = Temperature()
 class Simulator:
 
     flagSendData = 0
+    flagExit = 0
     inFile = None
     timer = None
     expr = None
@@ -50,6 +52,11 @@ class Simulator:
     flagSimRun = 0
 
     server = None
+    flagCommandMode = 0
+    BrakePinNo = 0
+    BrakePin = None
+    
+    keepAwakeCommand = '\\' # \ = Invalid commnand, Just to keep awake
     
 
     def log(self, message):
@@ -64,14 +71,34 @@ class Simulator:
         except Exception:
             print('Failed to open log file')
 
+    def viewLog(self):
+        if self.logfile is not None:
+            self.logfile.seek(0,0)
+            self.bridge.client.sendall(self.logfile.read())
+        else:
+            self.bridge.client.sendall('Log file does not exist')
+        
+    def delLog(self):
+        self.logfile.close()
+        import os
+        os.remove('/log.txt')
+        self.logfile = None
 
     def __init__(self, config):
         self.server = server
         self.inFileName = config.setdefault('simdata', 'ecu.data')
+        # self.BrakePinNo = int(config.setdefault('brakepin', '0'))
+        # if self.BrakePinNo != 0:
+            # self.BrakePin = Pin(self.BrakePinNo, Pin.OUT, Pin.PULL_UP) # Set it high as grounding will activate it.
+            # self.BrakePin.off()
         print("Simulation File Name: {0}", self.inFileName)
 
     def setSendData(self, timer):
-        self.flagSendData = 1
+        if self.flagSimRun == 1:
+            self.flagSendData = 1
+        elif self.bridge.uart is not None:
+            if self.flagCommandMode == 1:
+                self.bridge.uart.write(self.keepAwakeCommand)
 
     def startSimulator(self, bridge):
         if(self.inFileName == None):
@@ -150,9 +177,18 @@ class Simulator:
                     return # Bad data, try again since we are not resetting the flag.
                     
                 print("{:04d}:{:03d}:{:01d}:{}".format(nRpm, nSpeed, nBreak, str(time.ticks_ms())))
-                command = ("`{:04d} {:03d} {:01d} ".format(nRpm, nSpeed, nBreak)) # space between fields to allow placing null to split string in recieving code. 
-                print(command)
                 
+                if self.BrakePin is None:
+                    command = ("`{:04d} {:03d} {:01d} ".format(nRpm, nSpeed, nBreak)) # space between fields to allow placing null to split string in recieving code. 
+                #else:
+                    # command = ("`{:04d} {:03d} {:01d} ".format(nRpm, nSpeed, 0)) # if externally controlling brake, do not send brake flag to device. 
+                    # if nBreak == 0:
+                        # self.BrakePin = Pin(self.BrakePinNo, Pin.OUT, Pin.PULL_UP) # Set it high as grounding will activate it.
+                        # self.BrakePin.off()
+                    # else:
+                        # self.BrakePin = Pin(self.BrakePinNo, Pin.IN, Pin.PULL_DOWN) # Set it high as grounding will activate it.
+                        # self.BrakePin.On()                
+                print(command)                
                 self.slowSendData(command)
 
             self.flagSendData = 0
@@ -223,17 +259,38 @@ class Bridge:
         return tcp
 
     def process_command(self, data):
-    
-        if data.find('|S') != -1:
-            self.simulator.slowSendData(gEnterCommandMode)
-            self.simulator.flagSimRun = 1
-            print("flagSimRun = 1")
-            return True
-        elif data.find('|T') != -1:
-            print("flagSimRun = 0")
-            self.simulator.flagSimRun = 0
-            return True
-
+        try:
+            if data.find('|S') != -1: # Simulate
+                self.simulator.slowSendData(gEnterCommandMode)
+                self.simulator.flagCommandMode = 1
+                self.simulator.flagSimRun = 1
+                print("flagSimRun, flagCommandMode = 1")
+                return True
+            if data.find('|C') != -1: # Command mode, just enter it on device
+                self.simulator.slowSendData(gEnterCommandMode)
+                self.simulator.flagCommandMode = 1 if self.simulator.flagCommandMode == 0 else 0
+                print("flagCommandMode = " + str(self.simulator.flagCommandMode))
+                return True
+            elif data.find('|T') != -1: # sTop
+                print("flagSimRun = 0")
+                self.simulator.flagSimRun = 0
+                return True
+            elif data.find('|E') != -1: #Exit
+                print("flagExit = 1")
+                self.simulator.flagExit = 1
+                return True
+            elif data.find('|ViewLog') != -1: #View Log file 
+                self.simulator.viewLog()
+                return True
+            elif data.find('|DelLog') != -1: #Delete Log file 
+                self.simulator.delLog()
+                return True
+        except Exception as e:
+            print(str(e))
+            self.client.sendall(str(e))
+            self.simulator.log(str(e))
+           
+        
         return False
 
 
@@ -310,7 +367,7 @@ class S2NServer:
         try:
             self._serve_forever()
         except KeyboardInterrupt:
-            print('Ctrl-C pressed. Bailing out')
+            print('Ctrl-C pressed or Exit Command Recieved.')
 
     def bind(self):
         bridges = []
@@ -334,6 +391,9 @@ class S2NServer:
 
                 if self.simulator.flagSimRun == 1:
                     self.simulator.sendData()
+                    
+                if self.simulator.flagExit == 1:
+                    return
 
                 if xlist:
                     print('Errors. bailing out')
