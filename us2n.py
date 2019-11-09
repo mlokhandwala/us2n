@@ -10,6 +10,8 @@ import re
 from machine import Timer
 from machine import ADC, Pin
 import machine
+import ntptime
+
 
 print_ = print
 VERBOSE = 1
@@ -67,7 +69,8 @@ class Simulator:
             if self.logfile is None:
                 return
 
-            self.logfile.write(str(time.ticks_ms() / 60000) + ':' + message + '\r\n')
+            t = machine.RTC().datetime()
+            self.logfile.write("[{}:{}:{}:{}:{}:{}:{}] {}".format(t[0],t[1],t[2],t[3],t[4],t[4],t[6], message))
         except Exception:
             print('Failed to open log file')
 
@@ -83,15 +86,28 @@ class Simulator:
         import os
         os.remove('/log.txt')
         self.logfile = None
+        
+    def logConsoles(self, text):
+        try:
+            print(str(text))
+            if self.bridge is not None and self.bridge.client is not None:
+                self.bridge.client.sendall(str(text))
+        except Exception as e:
+            print(str(e))
+
 
     def __init__(self, config):
         self.server = server
         self.inFileName = config.setdefault('simdata', 'ecu.data')
-        # self.BrakePinNo = int(config.setdefault('brakepin', '0'))
-        # if self.BrakePinNo != 0:
-            # self.BrakePin = Pin(self.BrakePinNo, Pin.OUT, Pin.PULL_UP) # Set it high as grounding will activate it.
-            # self.BrakePin.off()
-        print("Simulation File Name: {0}", self.inFileName)
+        self.BrakePinNo = int(config.setdefault('brakepin', 0))
+        if self.BrakePinNo != 0:
+            self.BrakePin = Pin(self.BrakePinNo, Pin.OUT) # pull up to avoid float
+            self.BrakePin.off()
+            self.logConsoles("BreakPin:" + str(self.BrakePin))
+
+        ntptime.settime()
+
+        self.logConsoles("Simulation File Name: {0}".format(self.inFileName))
 
     def setSendData(self, timer):
         if self.flagSimRun == 1:
@@ -101,16 +117,19 @@ class Simulator:
                 self.bridge.uart.write(self.keepAwakeCommand)
 
     def startSimulator(self, bridge):
-        if(self.inFileName == None):
-            print("Simulation data file name not found")
-            return
+        if(self.inFile is None):
+            if(self.inFileName == None):
+                self.logConsoles("Simulation data file name not found")
+                return
+
+            self.inFile = open(self.inFileName, 'r')
+            if(self.inFile is None):
+                self.logConsoles("Simulation data file not found")
+                return
+        else:
+            self.logConsoles("Resuming Simulation")
 
         self.bridge = bridge
-
-        self.inFile = open(self.inFileName, 'r')
-        if(self.inFile is None):
-            print("Simulation data file not found")
-
         self.expr = re.compile(',')
 
         if(self.timer == None):
@@ -158,8 +177,9 @@ class Simulator:
                 return
 
             line = self.inFile.readline(100)
+            self.linecount += 1
 
-            #print('X:' + line) #debug
+            #self.logConsoles('X:' + line) #debug
 
             if(line == ''):
                 self.reRunSimulator()
@@ -176,24 +196,25 @@ class Simulator:
                 if nRpm < 0 or nRpm > 7000 or nSpeed < 0 or nSpeed > 200 or nBreak < 0 or nBreak > 1:
                     return # Bad data, try again since we are not resetting the flag.
                     
-                print("{:04d}:{:03d}:{:01d}:{}".format(nRpm, nSpeed, nBreak, str(time.ticks_ms())))
+                #print("{:04d}:{:03d}:{:01d}:{}".format(nRpm, nSpeed, nBreak, str(time.ticks_ms())))
                 
                 if self.BrakePin is None:
                     command = ("`{:04d} {:03d} {:01d} ".format(nRpm, nSpeed, nBreak)) # space between fields to allow placing null to split string in recieving code. 
-                #else:
-                    # command = ("`{:04d} {:03d} {:01d} ".format(nRpm, nSpeed, 0)) # if externally controlling brake, do not send brake flag to device. 
-                    # if nBreak == 0:
-                        # self.BrakePin = Pin(self.BrakePinNo, Pin.OUT, Pin.PULL_UP) # Set it high as grounding will activate it.
-                        # self.BrakePin.off()
-                    # else:
-                        # self.BrakePin = Pin(self.BrakePinNo, Pin.IN, Pin.PULL_DOWN) # Set it high as grounding will activate it.
-                        # self.BrakePin.On()                
-                print(command)                
+                else:
+                    command = ("`{:04d} {:03d} {:01d} ".format(nRpm, nSpeed, 2 if nBreak == 0 else 3)) # if externally controlling brake, set brake not (0,1) so 2,3. 
+                    if nBreak == 0:
+                        self.BrakePin.off()
+                    else:
+                        self.BrakePin.on()                
+                print("[{}] {}".format(self.linecount, command))                
                 self.slowSendData(command)
+                
+                if self.linecount == 0 or self.linecount % 1000 == 0:
+                    self.log('Run:{} Line:{}'.format(self.simrun, self.linecount))
 
             self.flagSendData = 0
         except Exception as e: # most likely due to conversion error in data
-            print(str(e))
+            self.logConsoles(str(e))
             self.log(str(e)) 
         
 

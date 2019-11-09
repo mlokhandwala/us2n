@@ -5,6 +5,8 @@
 #u1.write('Y')
 #print(u1.read())
 
+config = None
+
 def _slowSendData(uart, text):
     import time
     for c in text:
@@ -94,6 +96,29 @@ def brakepin(num = -1):
         
     except Exception as e:
         print(str(e))
+
+def readConfig():
+    import json
+
+    global config
+    
+    with open('us2n.json') as f: #readonly
+        config = json.load(f)
+
+def brake(on = 1):
+    global config
+    
+    if config is None:
+        readConfig()
+        
+    from machine import Pin
+    
+    p = Pin(config['brakepin'], Pin.OUT)
+    
+    if on == 1:
+        p.on()
+    else:
+        p.off()
 
     
     
