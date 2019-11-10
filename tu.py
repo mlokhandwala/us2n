@@ -24,6 +24,26 @@ def testUART():
     print(u2.read())
     time.sleep_ms(100)
     print(u2)
+
+def notify():    
+    # import socket
+    # #http://api.pushingbox.com/pushingbox?devid=vF76606BF68C0BFE
+    # s = socket.socket()
+    # ai = socket.getaddrinfo("api.pushingbox.com", 80)
+    # print("Address infos:", ai)
+    # addr = ai[0][-1]
+    # print("Address", addr)
+    # s.connect(addr)
+    
+    # s.send(b"GET /pushingbox?devid=vF76606BF68C0BFE HTTP/1.0\r\n\r\n")
+    # print(s.recv(4096))
+
+    # s.close()
+    import urequests as requests
+    
+    response = requests.get('http://api.pushingbox.com/pushingbox?devid=vF76606BF68C0BFE')
+    
+    print(response.status_code)
     
 def sts(text = '\\'): #send to system
     from machine import UART; import time

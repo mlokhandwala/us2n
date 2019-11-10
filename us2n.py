@@ -74,6 +74,15 @@ class Simulator:
         except Exception:
             print('Failed to open log file')
 
+    def notify(self):    
+        import urequests as requests
+
+        try:
+            response = requests.get('http://api.pushingbox.com/pushingbox?devid=vF76606BF68C0BFE')
+            print(response.status_code)
+        except Exception as e:
+            self.log(str(e))
+
     def viewLog(self):
         if self.logfile is not None:
             self.logfile.seek(0,0)
@@ -118,7 +127,11 @@ class Simulator:
             self.BrakePin.off()
             self.logConsoles("BreakPin:" + str(self.BrakePin))
 
-        ntptime.settime()
+        try:
+            ntptime.settime()
+        except Exception as e:
+            self.logConsoles(str(e))
+            self.log(str(e))
 
         self.logConsoles("Simulation File Name: {0}".format(self.inFileName))
 
@@ -140,22 +153,22 @@ class Simulator:
                 self.logConsoles("Simulation data file not found")
                 return
         else:
-            self.logConsoles("Resuming Simulation")
+            self.logConsoles("Resuming Simulation") # won't get called as this function is not called twice.
 
         self.bridge = bridge
         self.expr = re.compile(',')
 
         if(self.timer == None):
             self.timer = Timer(-1)
+            self.timer.init(period=50, mode=Timer.PERIODIC, callback=self.setSendData)
 
         self.simrun += 1
 
         if self.bridge.client is not None:
             self.bridge.client.sendall('Simulation Run Started: ' + str(self.simrun))
 
-        self.log('Simulation Run Started: ' + str(self.simrun))
-
-        self.timer.init(period=50, mode=Timer.PERIODIC, callback=self.setSendData)
+        self.log('Simulation Run Started:{}'.format(self.simrun))
+        self.notify()
 
     def stopSimulator(self):
         if(self.timer != None):
@@ -322,6 +335,10 @@ class Bridge:
             elif data.find('|W') != -1: #Wake System file 
                 self.simulator.wakeup()
                 return True
+            elif data.find('|M') != -1: #Mock Data
+                command = data.split('|M')[1][:12] 
+                self.simulator.slowSendData(command)
+                return True                
         except Exception as e:
             print(str(e))
             self.client.sendall(str(e))
