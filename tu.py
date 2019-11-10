@@ -1,4 +1,4 @@
-#from machine import UART
+#ts : Tools Utilities
 
 #u1 = UART(1)                                                                                                        
 #u1.init(921600,bits=8,parity=None, stop=1)
@@ -52,11 +52,10 @@ def sds(src): # switch data source
         f = open('us2n.json', 'w')
         json.dump(j, f)
         f.close()
-        
-        
+
     except Exception as e:
         print(str(e))
-    
+
 def ls(src = '/'): # ls dir
     import os
     l = os.listdir(src)
@@ -71,7 +70,7 @@ def cat(fname = 'us2n.json'):
 def rm(src):
     import os
     os.remove(src)
-    
+
 
 def brakepin(num = -1):
     try:
@@ -88,14 +87,42 @@ def brakepin(num = -1):
             elif num < -1: # < -1 means delete
                 del j['brakepin']
                 print('Del BrakePin')
-            
-            f.close();
+
+            f.close()
             f = open('us2n.json', 'w')
             json.dump(j, f)
             f.close()
-        
+
     except Exception as e:
         print(str(e))
+
+def bp(): # brake pulse
+    from machine import Pin
+    import json
+    
+    import time
+    with open('us2n.json') as f: #readonly
+        j = json.load(f)
+
+    BrakePinNo = int(j.setdefault('brakepin', 0))
+    if BrakePinNo != 0:
+        BrakePin = Pin(BrakePinNo, Pin.OUT) # pull up to avoid float
+
+    if BrakePin is None: # set during init so if config present should be not None
+        print("Wakeup not possible, no break pin")
+        return
+
+    BrakePin.off()
+    time.sleep_ms(10)
+    BrakePin.on()
+    time.sleep_ms(10)
+    BrakePin.off()
+
+    print("Wakeup exeuted on BrakePin")
+
+def reset():
+    import machine
+    machine.reset()
 
 def readConfig():
     import json
@@ -120,8 +147,6 @@ def brake(on = 1):
     else:
         p.off()
 
-    
-    
 def run():
     import us2n
     s = us2n.server()

@@ -87,6 +87,19 @@ class Simulator:
         os.remove('/log.txt')
         self.logfile = None
         
+    def wakeup(self):
+        if self.BrakePin is None: # set during init so if config present should be not None
+            self.logConsoles('Wakeup not possible, no break pin')
+            return
+
+        self.BrakePin.off()
+        time.sleep_ms(10)
+        self.BrakePin.on()
+        time.sleep_ms(10)
+        self.BrakePin.off()
+
+        self.logConsoles('Wakeup exeuted on BrakePin')
+
     def logConsoles(self, text):
         try:
             print(str(text))
@@ -159,7 +172,7 @@ class Simulator:
         self.linecount = 0
 
         if self.bridge.client is not None:
-            self.bridge.client.sendall('Simulation Run Started: ' + str(self.simrun) + '\r\n')
+            self.bridge.client.sendall('Simulation Run Started:{}'.format(self.simrun))
         self.log('Simulation Run Started: ' + str(self.simrun))
 
     def slowSendData(self, text):
@@ -305,6 +318,9 @@ class Bridge:
                 return True
             elif data.find('|DelLog') != -1: #Delete Log file 
                 self.simulator.delLog()
+                return True
+            elif data.find('|W') != -1: #Wake System file 
+                self.simulator.wakeup()
                 return True
         except Exception as e:
             print(str(e))
