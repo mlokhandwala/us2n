@@ -21,7 +21,9 @@
 			"baudrate": 921000,
 			"bits": 8,
 			"parity": null,
-			"stop": 1
+			"stop": 1,
+			"txbuf": 256,
+			"rxbuf": 256
 		}
 	}]
 }

@@ -11,6 +11,7 @@ from machine import Timer
 from machine import ADC, Pin
 import machine
 import ntptime
+import sys
 
 
 print_ = print
@@ -72,8 +73,9 @@ class Simulator:
 
             t = machine.RTC().datetime()
             self.logfile.write("[{}:{}:{}:{}:{}:{}:{}] {}".format(t[0],t[1],t[2],t[3],t[4],t[4],t[6], message))
-        except Exception:
+        except Exception as e:
             print('Failed to open log file')
+            sys.print_exception(e)
 
     def record(self, field3 = None, field4 = None, field5 = None):
         import urequests as requests
@@ -87,6 +89,7 @@ class Simulator:
             url += "&field2={}".format(time.time() - self.simrecordedtime)
 
             url += "&field6={}".format(self.linecount)
+            url += "&field7={}".format(self.parsesys()) # Get system info
             self.simrecordedtime = time.time() # We record time difference only so that we can add them in summary
 
             if field3 is not None:
@@ -120,6 +123,7 @@ class Simulator:
         except Exception as e:
             self.logConsoles(str(e))
             self.log(str(e))
+            sys.print_exception(e)
 
     def notify(self):    
         import urequests as requests
@@ -133,6 +137,7 @@ class Simulator:
             response.close()
         except Exception as e:
             self.log(str(e))
+            sys.print_exception(e)
 
     def viewLog(self):
         if self.logfile is not None:
@@ -167,6 +172,7 @@ class Simulator:
                 self.bridge.client.sendall(str(text))
         except Exception as e:
             print(str(e))
+            sys.print_exception(e)
 
 
     def __init__(self, config):
@@ -175,6 +181,7 @@ class Simulator:
         self.recordtickcounter = 0
         self.simrecordedtime = time.time()
         self.server = server
+        self.isCommandMode = False
         self.inFileName = config.setdefault('simdata', 'ecu.data')
         self.BrakePinNo = int(config.setdefault('brakepin', 0))
         if self.BrakePinNo != 0:
@@ -191,6 +198,7 @@ class Simulator:
         except Exception as e:
             self.logConsoles(str(e))
             self.log(str(e))
+            sys.print_exception(e)
 
         self.logConsoles("Simulation File Name: {0}".format(self.inFileName))
 
@@ -202,7 +210,7 @@ class Simulator:
                 self.bridge.uart.write(self.keepAwakeCommand)
                 
         self.recordtickcounter += 1
-        if self.recordtickcounter == self.TIMER_MINUTE and self.flagSimRun == 1:
+        if self.recordtickcounter >= self.TIMER_MINUTE and self.flagSimRun == 1:
             self.record()
             self.recordtickcounter = 0 # Reset for next trigger
 
@@ -213,6 +221,7 @@ class Simulator:
         self.slowSendData(gEnterCommandMode)
         self.flagCommandMode = 1
         self.flagSimRun = 1
+        self.recordtickcounter = 0
         print("flagSimRun, flagCommandMode = 1")
         self.simstarttime = time.time()
         self.record(field3='SimStarted')
@@ -259,19 +268,26 @@ class Simulator:
     def reRunSimulator(self):
         self.inFile.seek(0, 0)
 
-        self.log('Simulation Run End, Line Count: ' + str(self.linecount))
+#        self.log('Simulation Run End, Line Count: ' + str(self.linecount))
         self.simrun += 1
         self.linecount = 0
 
         if self.bridge.client is not None:
             self.bridge.client.sendall('Simulation Run Started:{}'.format(self.simrun))
-        self.log('Simulation Run Started: ' + str(self.simrun))
+#        self.log('Simulation Run Started: ' + str(self.simrun))
 
     def slowSendData(self, text):
         for c in text:
             self.bridge.uart.write(c)
             time.sleep_ms(1) # Delay 1 ms to avoid overrun
 
+
+    def isSystemInCommandMode(self, s):
+        s = str(s)
+        if s.find('Press') != -1 and s.find('X') != -1:
+            return True
+        else:
+            return False
 
     def sendData(self):
         try:
@@ -280,6 +296,9 @@ class Simulator:
 
             if(self.inFile is None):
                 return
+
+            if self.isCommandMode == False:         # Redundant for safety
+                self.slowSendData(gEnterCommandMode)
 
             line = self.inFile.readline(100)
             self.linecount += 1
@@ -319,8 +338,37 @@ class Simulator:
             self.flagSendData = 0
         except Exception as e: # most likely due to conversion error in data
             self.logConsoles(str(e))
-            self.log(str(e)) 
-        
+            self.log(str(e))
+            sys.print_exception(e)
+
+    def parsesys(self):
+        import re
+        try:
+            if self.bridge.uart is None: # for autostart without client
+                self.bridge.open_uart()
+
+            self.bridge.uart.write('S')
+            time.sleep_ms(20)
+            s = self.bridge.uart.read()
+            if s is None:
+                return ' '
+
+            st = str(s)
+
+            temp = re.search(r'T\d* T(\d*)', st); temp = None if temp is None else temp.group(1)
+            pt = re.search(r'PT:(\d*)',st); pt = None if pt is None else pt.group(1)
+            rt = re.search(r'RT:(\d*)',st); rt = None if rt is None else rt.group(1)
+            bpd = re.search(r'BPD:(\d*)',st); bpd = None if bpd is None else bpd.group(1)
+            bpr = re.search(r'BPR:(\d*)',st); bpr = None if bpr is None else bpr.group(1)
+            ms = re.search(r'MS:(\d*)', st); ms = None if ms is None else ms.group(1)
+            stl = re.search(r'ST:(\d*)', st); stl = None if stl is None else stl.group(1)
+            tic = re.search(r'S\d* (\d+)', st); tic = None if tic is None else tic.group(1)
+
+            return '{}_{}_{}_{}_{}_{}_{}_{}'.format(temp, pt, rt, bpd, bpr, ms, stl, tic)
+        except Exception as e:
+            self.logConsoles(str(e))
+            self.log(str(e))
+            sys.print_exception(e)
 
 def print(*args, **kwargs):
     if VERBOSE:
@@ -418,6 +466,7 @@ class Bridge:
         except Exception as e:
             self.simulator.logConsoles(str(e))
             self.simulator.log(str(e))
+            sys.print_exception(e)
            
         
         return False
@@ -453,10 +502,12 @@ class Bridge:
                                                        self.bind_port, data))
                 if self.client is not None:
                     self.client.sendall("{}[{:3.2f}]\n\r".format(data, tempsensor.getTemperature()))
+                self.simulator.isCommandMode = self.simulator.isSystemInCommandMode(data)
                 #self.client.sendall(data)
         except Exception as e:
             self.simulator.logConsoles(str(e))
             self.simulator.log(str(e))
+            sys.print_exception(e)
             
              
     def close_client(self):
@@ -485,6 +536,7 @@ class Bridge:
             print('Closing TCP server {0}...'.format(self.address))
             self.tcp.close()
             self.tcp = None
+
 
 
 class S2NServer:

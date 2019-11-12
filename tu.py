@@ -44,6 +44,23 @@ def notify():
     response = requests.get('http://api.pushingbox.com/pushingbox?devid=vF76606BF68C0BFE')
     
     print(response.status_code)
+
+def parsesys(txt):
+    import re
+    st = str(txt)
+
+    temp = re.search(r'T\d* T(\d*)', st); temp = None if temp is None else temp.group(1)
+    pt = re.search(r'PT:(\d*)',st); pt = None if pt is None else pt.group(1)
+    rt = re.search(r'RT:(\d*)',st); rt = None if rt is None else rt.group(1)
+    bpd = re.search(r'BPD:(\d*)',st); bpd = None if bpd is None else bpd.group(1)
+    bpr = re.search(r'BPR:(\d*)',st); bpr = None if bpr is None else bpr.group(1)
+    ms = re.search(r'MS:(\d*)', st); ms = None if ms is None else ms.group(1)
+    st = re.search(r'ST:(\d*)', st); st = None if st is None else st.group(1)
+    tic = re.search(r'S\d* (\d+)', st); tic = None if tic is None else tic.group(1)
+
+    print('{},{},{},{},{},{},{},{}'.format(temp, pt, rt, bpd, bpr, ms, st, tic))
+
+
     
 def sts(text = '\\'): #send to system
     from machine import UART; import time
@@ -54,6 +71,14 @@ def sts(text = '\\'): #send to system
     _slowSendData(u2, text)
     time.sleep_ms(10)
     print('sent:' + str(text))
+
+    import time
+    time.sleep_ms(100)
+
+    data = u2.read()
+    print(data)
+    return data
+
     
 def sds(src): # switch data source
     if src is None:
@@ -68,7 +93,7 @@ def sds(src): # switch data source
         j = json.load(f)
         j['simdata'] = src
         
-        f.close();
+        f.close()
         f = open('us2n.json', 'w')
         json.dump(j, f)
         f.close()
