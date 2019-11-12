@@ -192,6 +192,7 @@ class Simulator:
         self.notifyurl = config.setdefault('notifyurl', None)
         self.recorderurl = config.setdefault('recorderurl', None)
         self.autostartsim = config.setdefault('autostartsim', 0)
+        self.recordinterval = config.setdefault('recordinterval', 5)
 
         try:
             ntptime.settime()
@@ -210,7 +211,7 @@ class Simulator:
                 self.bridge.uart.write(self.keepAwakeCommand)
                 
         self.recordtickcounter += 1
-        if self.recordtickcounter >= self.TIMER_MINUTE and self.flagSimRun == 1:
+        if self.recordtickcounter >= (self.TIMER_MINUTE * self.recordinterval) and self.flagSimRun == 1:
             self.record()
             self.recordtickcounter = 0 # Reset for next trigger
 
