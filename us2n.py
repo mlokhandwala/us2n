@@ -47,8 +47,6 @@ class Simulator:
 
     bridge = None
 
-    simrun = 0
-    linecount = 0
     logfile = None
 
     flagSimRun = 0
@@ -57,6 +55,9 @@ class Simulator:
     flagCommandMode = 0
     BrakePinNo = 0
     BrakePin = None
+
+    TIMER_INTERVAL = 50 #ms
+    TIMER_MINUTE = 60 * 1000 / TIMER_INTERVAL
     
     keepAwakeCommand = '\\' # \ = Invalid commnand, Just to keep awake
     
@@ -74,12 +75,62 @@ class Simulator:
         except Exception:
             print('Failed to open log file')
 
+    def record(self, field3 = None, field4 = None, field5 = None):
+        import urequests as requests
+
+        try:
+            if self.recorderurl is None:
+                return
+
+            url = self.recorderurl
+            url += "&field1={}".format(tempsensor.getTemperature())
+            url += "&field2={}".format(time.time() - self.simrecordedtime)
+
+            url += "&field6={}".format(self.linecount)
+            self.simrecordedtime = time.time() # We record time difference only so that we can add them in summary
+
+            if field3 is not None:
+                url += "&field3={}".format(field3)
+
+            if field4 is not None:
+                url += "&field4={}".format(field4)
+
+            if field5 is not None:
+                url += "&field5={}".format(field5)
+
+
+            #print(url)
+            attempt = 0
+
+            while attempt < 5:
+                response = requests.get(url)
+
+                if response.status_code == 200:
+                    response.close()
+                    break
+                else:
+                    attempt += 1
+                    print("ERecFailed:".format(response.status_code))
+                    time.sleep_ms(100)  # wait a bit before retrying. server may be throttling or busy
+                    response.close()
+
+            import gc
+            gc.collect()
+
+        except Exception as e:
+            self.logConsoles(str(e))
+            self.log(str(e))
+
     def notify(self):    
         import urequests as requests
 
         try:
-            response = requests.get('http://api.pushingbox.com/pushingbox?devid=vF76606BF68C0BFE')
+            if self.notifyurl is None:
+                return
+
+            response = requests.get(self.notifyurl)
             print(response.status_code)
+            response.close()
         except Exception as e:
             self.log(str(e))
 
@@ -119,6 +170,10 @@ class Simulator:
 
 
     def __init__(self, config):
+        self.simrun = 0
+        self.linecount = 0
+        self.recordtickcounter = 0
+        self.simrecordedtime = time.time()
         self.server = server
         self.inFileName = config.setdefault('simdata', 'ecu.data')
         self.BrakePinNo = int(config.setdefault('brakepin', 0))
@@ -126,6 +181,10 @@ class Simulator:
             self.BrakePin = Pin(self.BrakePinNo, Pin.OUT) # pull up to avoid float
             self.BrakePin.off()
             self.logConsoles("BreakPin:" + str(self.BrakePin))
+
+        self.notifyurl = config.setdefault('notifyurl', None)
+        self.recorderurl = config.setdefault('recorderurl', None)
+        self.autostartsim = config.setdefault('autostartsim', 0)
 
         try:
             ntptime.settime()
@@ -135,12 +194,28 @@ class Simulator:
 
         self.logConsoles("Simulation File Name: {0}".format(self.inFileName))
 
-    def setSendData(self, timer):
+    def timerTickHandler(self, timer):
         if self.flagSimRun == 1:
             self.flagSendData = 1
         elif self.bridge.uart is not None:
             if self.flagCommandMode == 1:
                 self.bridge.uart.write(self.keepAwakeCommand)
+                
+        self.recordtickcounter += 1
+        if self.recordtickcounter == self.TIMER_MINUTE and self.flagSimRun == 1:
+            self.record()
+            self.recordtickcounter = 0 # Reset for next trigger
+
+    def startSimulation(self):
+        if self.bridge.uart is None: # for autostart without client
+            self.bridge.open_uart()
+
+        self.slowSendData(gEnterCommandMode)
+        self.flagCommandMode = 1
+        self.flagSimRun = 1
+        print("flagSimRun, flagCommandMode = 1")
+        self.simstarttime = time.time()
+        self.record(field3='SimStarted')
 
     def startSimulator(self, bridge):
         if(self.inFile is None):
@@ -160,7 +235,7 @@ class Simulator:
 
         if(self.timer == None):
             self.timer = Timer(-1)
-            self.timer.init(period=50, mode=Timer.PERIODIC, callback=self.setSendData)
+            self.timer.init(period=50, mode=Timer.PERIODIC, callback=self.timerTickHandler)
 
         self.simrun += 1
 
@@ -169,6 +244,10 @@ class Simulator:
 
         self.log('Simulation Run Started:{}'.format(self.simrun))
         self.notify()
+        self.record(field3='Server Started')
+
+        if self.autostartsim == 1:
+            self.startSimulation()
 
     def stopSimulator(self):
         if(self.timer != None):
@@ -211,7 +290,6 @@ class Simulator:
                 self.reRunSimulator()
                 return
 
-            self.linecount += 1
             data = self.expr.split(line)
 
             if(data):
@@ -243,7 +321,6 @@ class Simulator:
             self.logConsoles(str(e))
             self.log(str(e)) 
         
-
 
 def print(*args, **kwargs):
     if VERBOSE:
@@ -308,10 +385,7 @@ class Bridge:
     def process_command(self, data):
         try:
             if data.find('|S') != -1: # Simulate
-                self.simulator.slowSendData(gEnterCommandMode)
-                self.simulator.flagCommandMode = 1
-                self.simulator.flagSimRun = 1
-                print("flagSimRun, flagCommandMode = 1")
+                self.simulator.startSimulation()
                 return True
             if data.find('|C') != -1: # Command mode, just enter it on device
                 self.simulator.slowSendData(gEnterCommandMode)
@@ -321,10 +395,12 @@ class Bridge:
             elif data.find('|T') != -1: # sTop
                 print("flagSimRun = 0")
                 self.simulator.flagSimRun = 0
+                self.simulator.record(field3='SimStopped')
                 return True
             elif data.find('|E') != -1: #Exit
                 print("flagExit = 1")
                 self.simulator.flagExit = 1
+                self.simulator.record(field3='ServerExit')
                 return True
             elif data.find('|ViewLog') != -1: #View Log file 
                 self.simulator.viewLog()
@@ -340,13 +416,11 @@ class Bridge:
                 self.simulator.slowSendData(command)
                 return True                
         except Exception as e:
-            print(str(e))
-            self.client.sendall(str(e))
+            self.simulator.logConsoles(str(e))
             self.simulator.log(str(e))
            
         
         return False
-
 
     def fill(self, fds):
         if self.uart is not None:
@@ -377,11 +451,11 @@ class Bridge:
                 data = self.uart.read()
                 print('UART({0})->TCP({1}) {2}'.format(self.uart_port,
                                                        self.bind_port, data))
-                self.client.sendall("{}[{:3.2f}]\n\r".format(data, tempsensor.getTemperature()))
+                if self.client is not None:
+                    self.client.sendall("{}[{:3.2f}]\n\r".format(data, tempsensor.getTemperature()))
                 #self.client.sendall(data)
         except Exception as e:
-            print(str(e))
-            self.client.sendall(str(e))
+            self.simulator.logConsoles(str(e))
             self.simulator.log(str(e))
             
              
@@ -394,6 +468,10 @@ class Bridge:
         if self.uart is not None:
 #            self.uart.deinit()
             self.uart = None
+
+    def open_uart(self):
+        self.uart = UART(self.config['uart'])
+        print(self.uart)
 
     def open_client(self):
         self.uart = UART(self.config['uart'])

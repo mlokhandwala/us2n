@@ -116,6 +116,39 @@ def brakepin(num = -1):
     except Exception as e:
         print(str(e))
 
+
+def configset(name, value):
+    try:
+        import json
+
+        with open('us2n.json') as f:  # readonly
+            j = json.load(f)
+
+            j[name] = value
+            print(j)
+
+            f.close()
+            f = open('us2n.json', 'w')
+            json.dump(j, f)
+            f.close()
+
+    except Exception as e:
+        print(str(e))
+
+def configget(name):
+    try:
+        import json
+
+        with open('us2n.json') as f:  # readonly
+            j = json.load(f)
+
+            print(j[name])
+
+            f.close()
+
+    except Exception as e:
+        print(str(e))
+
 def bp(): # brake pulse
     from machine import Pin
     import json

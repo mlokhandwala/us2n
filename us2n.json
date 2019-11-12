@@ -2,6 +2,10 @@
 	"name": "SuperESP32",
 	"verbose": 1,
 	"simdata": "ecu.small",
+	"notifyurl": "http://api.pushingbox.com/pushingbox?devid=vF76606BF68C0BFE",
+	"recorderurl": "http://api.thingspeak.com/update?api_key=TU5W6RZSZWDI4BMF",
+	"brakepin": 33,
+	"autostartsim": 0,
 	"wlan": {
 		"sta": {
 			"essid": "Lokhandwala",
