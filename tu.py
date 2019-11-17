@@ -232,4 +232,12 @@ def run():
     
     
 
+def aoff():
+    configset('autostartsim', 0)
+    print('Auto Start Sim OFF')
+    return
     
+def aon():
+    configset('autostartsim', 1)
+    print('Auto Start Sim ON')
+    return
