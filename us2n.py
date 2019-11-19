@@ -13,11 +13,11 @@ import machine
 import ntptime
 import sys
 
-
 print_ = print
 VERBOSE = 1
 
 gEnterCommandMode = 'XXXXXXXXXXX'
+
 
 class RingBuffer:
     def __init__(self, size):
@@ -35,37 +35,52 @@ class RingBuffer:
     def get(self):
         return self.data
 
+
 class Temperature:
-    
-    
+
     def __init__(self):
-        self.adcP1 = ADC(Pin(33))          # create ADC object on ADC pin
-        self.adcP1.atten(ADC.ATTN_11DB)    # set 11dB input attenuation (voltage range roughly 0.0v - 3.6v)
-        self.adcP1.width(ADC.WIDTH_12BIT)   # set 9 bit return values (returned range 0-511)
-        
+        self.adcP1 = ADC(Pin(33))  # create ADC object on ADC pin
+        self.adcP1.atten(ADC.ATTN_11DB)  # set 11dB input attenuation (voltage range roughly 0.0v - 3.6v)
+        self.adcP1.width(ADC.WIDTH_12BIT)  # set 9 bit return values (returned range 0-511)
+
         self.several = RingBuffer(10)
         self.several.initialize(self.getTemperature)
 
     def getTemperature(self):
         raw = self.adcP1.read()
-        voltage = (raw / 1.13) # from observation & calculation. 290mV gives 240 reading but 1.5V gives 1700 reading. 4096 / 3600 also = 1.13 so using that
+        voltage = (
+                    raw / 1.13)  # from observation & calculation. 290mV gives 240 reading but 1.5V gives 1700 reading. 4096 / 3600 also = 1.13 so using that
         tempC = voltage * 0.1
-        
-        #if 'several' in vars(Temperature):
+
+        # if 'several' in vars(Temperature):
         self.several.append(tempC)
-        
+
         return tempC
-        
+
     def getAvTemp(self):
         return sum(self.several.get()) / len(self.several.get())
-        
-        
+
 
 tempsensor = Temperature()
 
+class LogData:
+
+     def __init__(self):
+         self.pos_current = 0
+         self.pos_requested = 0
+         self.voltage = 0
+         self.current = 0
+         self.ticks = 0
+         self.status = 0
+         self.fault = 0
+         self.state_flags = 0
+         self.ecu_state = 0
+         self.semaphore = 0
+         self.motor_fault = 0
+
+
 
 class Simulator:
-
     flagSendData = 0
     flagExit = 0
     inFile = None
@@ -84,11 +99,12 @@ class Simulator:
     BrakePinNo = 0
     BrakePin = None
 
-    TIMER_INTERVAL = 50 #ms
+    systemlog = RingBuffer(40) # 1 second of log 40 x 25ms
+
+    TIMER_INTERVAL = 50  # ms
     TIMER_MINUTE = 60 * 1000 / TIMER_INTERVAL
-    
-    keepAwakeCommand = '\\' # \ = Invalid commnand, Just to keep awake
-    
+
+    keepAwakeCommand = '\\'  # \ = Invalid commnand, Just to keep awake
 
     def log(self, message):
         try:
@@ -99,12 +115,12 @@ class Simulator:
                 return
 
             t = machine.RTC().datetime()
-            self.logfile.write("[{}:{}:{}:{}:{}:{}:{}] {}".format(t[0],t[1],t[2],t[3],t[4],t[4],t[6], message))
+            self.logfile.write("[{}:{}:{}:{}:{}:{}:{}] {}".format(t[0], t[1], t[2], t[3], t[4], t[4], t[6], message))
         except Exception as e:
             print('Failed to open log file')
             sys.print_exception(e)
 
-    def record(self, field3 = None, field4 = None, field5 = None):
+    def record(self, field3=None, field4=None, field5=None):
         import urequests as requests
 
         try:
@@ -116,8 +132,8 @@ class Simulator:
             url += "&field2={}".format(time.time() - self.simrecordedtime)
 
             url += "&field6={}".format(self.linecount)
-            url += "&field7={}".format(self.parsesys()) # Get system info
-            self.simrecordedtime = time.time() # We record time difference only so that we can add them in summary
+            url += "&field7={}".format(self.getsystemstatus())  # Get system info
+            self.simrecordedtime = time.time()  # We record time difference only so that we can add them in summary
 
             if field3 is not None:
                 url += "&field3={}".format(field3)
@@ -128,8 +144,7 @@ class Simulator:
             if field5 is not None:
                 url += "&field5={}".format(field5)
 
-
-            #print(url)
+            # print(url)
             attempt = 0
 
             while attempt < 5:
@@ -151,36 +166,49 @@ class Simulator:
             self.logConsoles(str(e))
             self.log(str(e))
             sys.print_exception(e)
+        finally:
+            response.close()
 
-    def notify(self):    
+    def notify(self, ntype='Reboot'):
         import urequests as requests
 
         try:
-            if self.notifyurl is None:
+
+            if ntype == 'Reboot' and self.notifyurl is not None:
+                response = requests.get(self.notifyurl)
+            else:
                 return
 
-            response = requests.get(self.notifyurl)
+            if ntype == 'Fault' and self.faulturl is not None:
+                response = requests.get(self.faulturl)
+            else:
+                return
+
+
             print(response.status_code)
             response.close()
         except Exception as e:
             self.log(str(e))
             sys.print_exception(e)
 
+        finally:
+            response.close()
+
     def viewLog(self):
         if self.logfile is not None:
-            self.logfile.seek(0,0)
+            self.logfile.seek(0, 0)
             self.bridge.client.sendall(self.logfile.read())
         else:
             self.bridge.client.sendall('Log file does not exist')
-        
+
     def delLog(self):
         self.logfile.close()
         import os
         os.remove('/log.txt')
         self.logfile = None
-        
+
     def wakeup(self):
-        if self.BrakePin is None: # set during init so if config present should be not None
+        if self.BrakePin is None:  # set during init so if config present should be not None
             self.logConsoles('Wakeup not possible, no break pin')
             return
 
@@ -201,7 +229,6 @@ class Simulator:
             print(str(e))
             sys.print_exception(e)
 
-
     def __init__(self, config):
         self.simrun = 0
         self.linecount = 0
@@ -212,11 +239,12 @@ class Simulator:
         self.inFileName = config.setdefault('simdata', 'ecu.data')
         self.BrakePinNo = int(config.setdefault('brakepin', 0))
         if self.BrakePinNo != 0:
-            self.BrakePin = Pin(self.BrakePinNo, Pin.OUT) # pull up to avoid float
+            self.BrakePin = Pin(self.BrakePinNo, Pin.OUT)  # pull up to avoid float
             self.BrakePin.off()
             self.logConsoles("BreakPin:" + str(self.BrakePin))
 
         self.notifyurl = config.setdefault('notifyurl', None)
+        self.faulturl = config.setdefault('faulturl', None)
         self.recorderurl = config.setdefault('recorderurl', None)
         self.autostartsim = config.setdefault('autostartsim', 0)
         self.recordinterval = config.setdefault('recordinterval', 5)
@@ -236,14 +264,14 @@ class Simulator:
         elif self.bridge.uart is not None:
             if self.flagCommandMode == 1:
                 self.bridge.uart.write(self.keepAwakeCommand)
-                
+
         self.recordtickcounter += 1
         if self.recordtickcounter >= (self.TIMER_MINUTE * self.recordinterval) and self.flagSimRun == 1:
             self.record()
-            self.recordtickcounter = 0 # Reset for next trigger
+            self.recordtickcounter = 0  # Reset for next trigger
 
     def startSimulation(self):
-        if self.bridge.uart is None: # for autostart without client
+        if self.bridge.uart is None:  # for autostart without client
             self.bridge.open_uart()
 
         self.slowSendData(gEnterCommandMode)
@@ -255,22 +283,22 @@ class Simulator:
         self.record(field3='SimStarted')
 
     def startSimulator(self, bridge):
-        if(self.inFile is None):
-            if(self.inFileName == None):
+        if (self.inFile is None):
+            if (self.inFileName == None):
                 self.logConsoles("Simulation data file name not found")
                 return
 
             self.inFile = open(self.inFileName, 'r')
-            if(self.inFile is None):
+            if (self.inFile is None):
                 self.logConsoles("Simulation data file not found")
                 return
         else:
-            self.logConsoles("Resuming Simulation") # won't get called as this function is not called twice.
+            self.logConsoles("Resuming Simulation")  # won't get called as this function is not called twice.
 
         self.bridge = bridge
         self.expr = re.compile(',')
 
-        if(self.timer == None):
+        if (self.timer == None):
             self.timer = Timer(-1)
             self.timer.init(period=50, mode=Timer.PERIODIC, callback=self.timerTickHandler)
 
@@ -287,28 +315,27 @@ class Simulator:
             self.startSimulation()
 
     def stopSimulator(self):
-        if(self.timer != None):
+        if (self.timer != None):
             self.timer.deinit()
 
         self.timer = None
 
-
     def reRunSimulator(self):
         self.inFile.seek(0, 0)
 
-#        self.log('Simulation Run End, Line Count: ' + str(self.linecount))
+        #        self.log('Simulation Run End, Line Count: ' + str(self.linecount))
         self.simrun += 1
         self.linecount = 0
 
         if self.bridge.client is not None:
             self.bridge.client.sendall('Simulation Run Started:{}'.format(self.simrun))
-#        self.log('Simulation Run Started: ' + str(self.simrun))
+
+    #        self.log('Simulation Run Started: ' + str(self.simrun))
 
     def slowSendData(self, text):
         for c in text:
             self.bridge.uart.write(c)
-            time.sleep_ms(1) # Delay 1 ms to avoid overrun
-
+            time.sleep_ms(1)  # Delay 1 ms to avoid overrun
 
     def isSystemInCommandMode(self, s):
         s = str(s)
@@ -322,57 +349,59 @@ class Simulator:
             if self.flagSendData == 0:
                 return
 
-            if(self.inFile is None):
+            if (self.inFile is None):
                 return
 
-            if self.isCommandMode == False:         # Redundant for safety
+            if self.isCommandMode == False:  # Redundant for safety
                 self.slowSendData(gEnterCommandMode)
 
             line = self.inFile.readline(100)
             self.linecount += 1
 
-            #self.logConsoles('X:' + line) #debug
+            # self.logConsoles('X:' + line) #debug
 
-            if(line == ''):
+            if (line == ''):
                 self.reRunSimulator()
                 return
 
             data = self.expr.split(line)
 
-            if(data):
+            if (data):
                 nRpm = int(data[0])
                 nSpeed = int(data[1])
                 nBreak = int(data[2])
-                
+
                 if nRpm < 0 or nRpm > 7000 or nSpeed < 0 or nSpeed > 200 or nBreak < 0 or nBreak > 1:
-                    return # Bad data, try again since we are not resetting the flag.
-                    
-                #print("{:04d}:{:03d}:{:01d}:{}".format(nRpm, nSpeed, nBreak, str(time.ticks_ms())))
-                
+                    return  # Bad data, try again since we are not resetting the flag.
+
+                # print("{:04d}:{:03d}:{:01d}:{}".format(nRpm, nSpeed, nBreak, str(time.ticks_ms())))
+
                 if self.BrakePin is None:
-                    command = ("`{:04d} {:03d} {:01d} ".format(nRpm, nSpeed, nBreak)) # space between fields to allow placing null to split string in recieving code. 
+                    command = ("`{:04d} {:03d} {:01d} ".format(nRpm, nSpeed,
+                                                               nBreak))  # space between fields to allow placing null to split string in recieving code.
                 else:
-                    command = ("`{:04d} {:03d} {:01d} ".format(nRpm, nSpeed, 2 if nBreak == 0 else 3)) # if externally controlling brake, set brake not (0,1) so 2,3. 
+                    command = ("`{:04d} {:03d} {:01d} ".format(nRpm, nSpeed,
+                                                               2 if nBreak == 0 else 3))  # if externally controlling brake, set brake not (0,1) so 2,3.
                     if nBreak == 0:
                         self.BrakePin.off()
                     else:
-                        self.BrakePin.on()                
-                print("[{}] {}".format(self.linecount, command))                
+                        self.BrakePin.on()
+                print("[{}] {}".format(self.linecount, command))
                 self.slowSendData(command)
-                
+
                 if self.linecount == 0 or self.linecount % 1000 == 0:
                     self.log('Run:{} Line:{}'.format(self.simrun, self.linecount))
 
             self.flagSendData = 0
-        except Exception as e: # most likely due to conversion error in data
+        except Exception as e:  # most likely due to conversion error in data
             self.logConsoles(str(e))
             self.log(str(e))
             sys.print_exception(e)
 
-    def parsesys(self):
+    def getsystemstatus(self):
         import re
         try:
-            if self.bridge.uart is None: # for autostart without client
+            if self.bridge.uart is None:  # for autostart without client
                 self.bridge.open_uart()
 
             self.bridge.uart.write('S')
@@ -383,20 +412,168 @@ class Simulator:
 
             st = str(s)
 
-            temp = re.search(r'T\d* T(\d*)', st); temp = None if temp is None else temp.group(1)
-            pt = re.search(r'PT:(\d*)',st); pt = None if pt is None else pt.group(1)
-            rt = re.search(r'RT:(\d*)',st); rt = None if rt is None else rt.group(1)
-            bpd = re.search(r'BPD:(\d*)',st); bpd = None if bpd is None else bpd.group(1)
-            bpr = re.search(r'BPR:(\d*)',st); bpr = None if bpr is None else bpr.group(1)
-            ms = re.search(r'MS:(\d*)', st); ms = None if ms is None else ms.group(1)
-            stl = re.search(r'ST:(\d*)', st); stl = None if stl is None else stl.group(1)
-            tic = re.search(r'S\d* (\d+)', st); tic = None if tic is None else tic.group(1)
+            temp = re.search(r'T\d* T(\d*)', st);
+            temp = None if temp is None else temp.group(1)
+            pt = re.search(r'PT:(\d*)', st);
+            pt = None if pt is None else pt.group(1)
+            rt = re.search(r'RT:(\d*)', st);
+            rt = None if rt is None else rt.group(1)
+            bpd = re.search(r'BPD:(\d*)', st);
+            bpd = None if bpd is None else bpd.group(1)
+            bpr = re.search(r'BPR:(\d*)', st);
+            bpr = None if bpr is None else bpr.group(1)
+            ms = re.search(r'MS:(\d*)', st);
+            ms = None if ms is None else ms.group(1)
+            stl = re.search(r'ST:(\d*)', st);
+            stl = None if stl is None else stl.group(1)
+            tic = re.search(r'S\d* (\d+)', st);
+            tic = None if tic is None else tic.group(1)
 
             return '{}_{}_{}_{}_{}_{}_{}_{}'.format(temp, pt, rt, bpd, bpr, ms, stl, tic)
         except Exception as e:
             self.logConsoles(str(e))
             self.log(str(e))
             sys.print_exception(e)
+
+
+    def monitorsimulation(self, lg):
+        import re
+
+        try:
+            ob = LogData()
+
+            temp = re.search(r'P:(\d+),(\d+)', lg)
+            ob.pos_requested = None if temp is None or temp.lastindex == 0 else int(temp.group(1))
+            ob.pos_current = None if temp is None or temp.lastindex == 1 else int(temp.group(2))
+
+            temp = re.search(r'V:(\d+)', lg)
+            ob.voltage = None if temp is None else int(temp.group(1))
+
+            temp = re.search(r'I:(\d+)', lg)
+            ob.current = None if temp is None else int(temp.group(1))
+
+            temp = re.search(r'F:([A-F0-9]+)\.([A-F0-9]+)\.([A-F0-9]+)\.([A-F0-9]+)\.([A-F0-9]+)\.([A-F0-9]+)', lg)
+            ob.state_flags = None if temp is None or temp.lastindex == 0 else int(temp.group(1), 16)
+            ob.motor_fault = None if temp is None or temp.lastindex == 1 else int(temp.group(2), 16)
+            ob.state = None if temp is None or temp.lastindex == 2 else int(temp.group(3), 16)
+            ob.fault = None if temp is None or temp.lastindex == 3 else int(temp.group(4), 16)
+            ob.ecu_state = None if temp is None or temp.lastindex == 4 else int(temp.group(5), 16)
+            ob.semaphore = None if temp is None or temp.lastindex == 5 else int(temp.group(6), 16)
+
+            temp = re.search(r' (\d+)', lg)
+            ob.ticks = None if temp is None else int(temp.group(1))
+
+            if ob.pos_current is None or ob.pos_requested is None or ob.voltage is None \
+                    or ob.current is None or ob.state_flags is None:
+                pass # Not a valid log string we could have parsed
+            else:
+                self.check_system_nominal(ob)
+                self.systemlog.append(ob)
+
+
+
+
+        except Exception as e:
+            self.logConsoles(str(e))
+            self.log(str(e))
+            sys.print_exception(e)
+
+    def check_system_nominal(self, ob):
+        HARD_MOTOR_FAULTS = 0b01101011
+        SOFT_SYSTEM_STATE_CALIB = 0b0000000011111000  # Can't be in calibration!
+        HARD_GDUSE_FAULTS = 0b01110111  # High & Low side Saturation
+
+        flagFault = 0
+
+
+        if ob.voltage < 10000: # Under 10V
+            self.record('UV', ob.voltage)
+            flagFault = 1
+        elif ob.voltage > 14500:
+            self.record('OV', ob.voltage)
+            flagFault = 1
+
+        if ob.pos_current > ob.pos_requested + 5:
+            self.record('PosOver', ob.pos_current, ob.pos_requested)
+            flagFault = 1
+
+        if ob.motor_fault & HARD_MOTOR_FAULTS != 0b00000000:
+            self.record('MotorFault', ob.motor_fault)
+            flagFault = 1
+
+        if ob.state & SOFT_SYSTEM_STATE_CALIB != 0b00000000:
+            self.record('MotorFault', ob.motor_fault)
+            flagFault = 1
+
+
+        if flagFault == 1:
+            self.stopSimulator()
+            self.notify('Fault')
+            self.slowSendData('s') #Stop?
+            return
+
+        if len(self.systemlog.data) == 0:
+            return 
+        
+        if self.systemlog.data[-1].ticks > ob.ticks:
+            self.record('ResetOrWake', ob.ticks, self.systemlog.data[-1].ticks)
+
+        ldatum = None
+        currents = []
+        monitor = 0
+
+        for index, datum in enumerate(self.systemlog.data, 1):
+            if ldatum is None:
+                ldatum = datum
+                continue
+            if monitor == 0:
+                if datum.pos_requested > ldatum.pos_requested:
+                    pulling = True
+                    releasing = False
+                    start_pos = datum.pos_current
+                    start_index = index
+                elif datum.pos_requested < ldatum.pos_requested:
+                    pulling = False
+                    releasing = True
+                    start_pos = datum.pos_current
+                    start_index = index
+
+                distance_req = abs(datum.pos_requested - ldatum.pos_requested)
+
+                if distance_req > 50 and len(self.systemlog.data) - start_index > 10 and pulling:
+                    monitor = 1
+                    count = 0
+                    currents = []
+                    start_requested_position = datum.pos_requested
+
+            else: # Logic ONLY for PULLing
+                count += 1
+                currents.append(datum.current)
+
+                if datum.pos_requested != start_requested_position:
+                    monitor = False # changed target
+
+                if monitor == True and abs(datum.pos_current - datum.pos_requested) < 3:
+                    loaded_current_count = sum(1 for i in currents if i > 2000)
+
+                    if loaded_current_count < 3:
+                        self.stopSimulator()
+                        self.record('RopeDisconnect')
+                        self.notify('Fault')
+                        self.slowSendData('s')  # Stop?
+                    monitor = False
+
+
+                if monitor == True and abs(datum.pos_requested - ldatum.pos_requested) > 3:
+
+
+            ldatum = datum
+
+
+
+
+
+
 
 def print(*args, **kwargs):
     if VERBOSE:
@@ -427,12 +604,11 @@ def UART(config):
     port = config.pop('port')
     uart = machine.UART(port)
     uart.init(**config)
-    #uart.init(921000, bits=8, parity=None, stop=1)
+    # uart.init(921000, bits=8, parity=None, stop=1)
     return uart
 
 
 class Bridge:
-
     simulator = None
 
     def __init__(self, config, simulator):
@@ -450,7 +626,7 @@ class Bridge:
     def bind(self):
         tcp = socket.socket()
         tcp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    #    tcp.setblocking(False)
+        #    tcp.setblocking(False)
         tcp.bind(self.address)
         tcp.listen(5)
         print('Bridge listening at TCP({0}) for UART({1})'
@@ -460,43 +636,42 @@ class Bridge:
 
     def process_command(self, data):
         try:
-            if data.find('|S') != -1: # Simulate
+            if data.find('|S') != -1:  # Simulate
                 self.simulator.startSimulation()
                 return True
-            if data.find('|C') != -1: # Command mode, just enter it on device
+            if data.find('|C') != -1:  # Command mode, just enter it on device
                 self.simulator.slowSendData(gEnterCommandMode)
                 self.simulator.flagCommandMode = 1 if self.simulator.flagCommandMode == 0 else 0
                 print("flagCommandMode = " + str(self.simulator.flagCommandMode))
                 return True
-            elif data.find('|T') != -1: # sTop
+            elif data.find('|T') != -1:  # sTop
                 print("flagSimRun = 0")
                 self.simulator.flagSimRun = 0
                 self.simulator.record(field3='SimStopped')
                 return True
-            elif data.find('|E') != -1: #Exit
+            elif data.find('|E') != -1:  # Exit
                 print("flagExit = 1")
                 self.simulator.flagExit = 1
                 self.simulator.record(field3='ServerExit')
                 return True
-            elif data.find('|ViewLog') != -1: #View Log file 
+            elif data.find('|ViewLog') != -1:  # View Log file
                 self.simulator.viewLog()
                 return True
-            elif data.find('|DelLog') != -1: #Delete Log file 
+            elif data.find('|DelLog') != -1:  # Delete Log file
                 self.simulator.delLog()
                 return True
-            elif data.find('|W') != -1: #Wake System file 
+            elif data.find('|W') != -1:  # Wake System file
                 self.simulator.wakeup()
                 return True
-            elif data.find('|M') != -1: #Mock Data
-                command = data.split('|M')[1][:12] 
+            elif data.find('|M') != -1:  # Mock Data
+                command = data.split('|M')[1][:12]
                 self.simulator.slowSendData(command)
-                return True                
+                return True
         except Exception as e:
             self.simulator.logConsoles(str(e))
             self.simulator.log(str(e))
             sys.print_exception(e)
-           
-        
+
         return False
 
     def fill(self, fds):
@@ -518,8 +693,8 @@ class Bridge:
                 if data:
                     print('TCP({0})->UART({1}) {2}'.format(self.bind_port, self.uart_port, data))
 
-                    if(self.process_command(str(data)) == False):
-                            self.uart.write(data)
+                    if (self.process_command(str(data)) == False):
+                        self.uart.write(data)
 
                 else:
                     print('Client ', self.client_address, ' disconnected')
@@ -531,13 +706,12 @@ class Bridge:
                 if self.client is not None:
                     self.client.sendall("{}[{:3.2f}]\n\r".format(data, tempsensor.getTemperature()))
                 self.simulator.isCommandMode = self.simulator.isSystemInCommandMode(data)
-                #self.client.sendall(data)
+                # self.client.sendall(data)
         except Exception as e:
             self.simulator.logConsoles(str(e))
             self.simulator.log(str(e))
             sys.print_exception(e)
-            
-             
+
     def close_client(self):
         if self.client is not None:
             print('Closing client ', self.client_address)
@@ -545,7 +719,7 @@ class Bridge:
             self.client = None
             self.client_address = None
         if self.uart is not None:
-#            self.uart.deinit()
+            #            self.uart.deinit()
             self.uart = None
 
     def open_uart(self):
@@ -566,9 +740,7 @@ class Bridge:
             self.tcp = None
 
 
-
 class S2NServer:
-
     simulator = None
 
     def __init__(self, config):
@@ -603,7 +775,7 @@ class S2NServer:
 
                 if self.simulator.flagSimRun == 1:
                     self.simulator.sendData()
-                    
+
                 if self.simulator.flagExit == 1:
                     return
 
@@ -644,7 +816,7 @@ def WLANStation(config, name):
         sta.active(True)
         sta.connect(essid, password)
         n, ms = 20, 250
-        t = n*ms
+        t = n * ms
         while not sta.isconnected() and n > 0:
             time.sleep_ms(ms)
             n -= 1
@@ -662,10 +834,10 @@ def WLANAccessPoint(config, name):
     config.setdefault('essid', name)
     config.setdefault('channel', 11)
     config.setdefault('authmode',
-                      getattr(network,'AUTH_' +
+                      getattr(network, 'AUTH_' +
                               config.get('authmode', 'OPEN').upper()))
     config.setdefault('hidden', False)
-#    config.setdefault('dhcp_hostname', name)
+    #    config.setdefault('dhcp_hostname', name)
     ap = network.WLAN(network.AP_IF)
     if not ap.isconnected():
         ap.active(True)
@@ -679,7 +851,7 @@ def WLANAccessPoint(config, name):
                   'I give up'.format(t))
             return ap
 
-#    ap.config(**config)
+    #    ap.config(**config)
     print('Wifi {0!r} connected as {1}'.format(ap.config('essid'),
                                                ap.ifconfig()))
     return ap
@@ -703,7 +875,7 @@ def server(config_filename='us2n.json'):
     VERBOSE = config.setdefault('verbose', 1)
     name = config.setdefault('name', 'Tiago-ESP32')
     config_verbosity(config)
-    print(50*'=')
+    print(50 * '=')
     print('Welcome to ESP8266/32 serial <-> tcp bridge\n')
     config_network(config.get('wlan'), name)
     return S2NServer(config)

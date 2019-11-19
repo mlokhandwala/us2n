@@ -3,8 +3,9 @@
 	"verbose": 1,
 	"simdata": "ecu.small",
 	"notifyurl": "http://api.pushingbox.com/pushingbox?devid=vF76606BF68C0BFE",
+	"faulturl": "http://api.pushingbox.com/pushingbox?devid=v1EE7C1E40F33463",
 	"recorderurl": "http://api.thingspeak.com/update?api_key=TU5W6RZSZWDI4BMF",
-	"brakepin": 33,
+	"brakepin": 4,
 	"autostartsim": 0,
 	"recordinterval": 2,
 	"wlan": {
