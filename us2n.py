@@ -360,8 +360,8 @@ class Simulator:
                 print("[{}] {}".format(self.linecount, command))                
                 self.slowSendData(command)
                 
-                if self.linecount == 0 or self.linecount % 1000 == 0:
-                    self.log('Run:{} Line:{}'.format(self.simrun, self.linecount))
+#                if self.linecount == 0 or self.linecount % 1000 == 0:
+#                    self.log('Run:{} Line:{}'.format(self.simrun, self.linecount))
 
             self.flagSendData = 0
         except Exception as e: # most likely due to conversion error in data
@@ -375,6 +375,7 @@ class Simulator:
             if self.bridge.uart is None: # for autostart without client
                 self.bridge.open_uart()
 
+            self.bridge.uart.read() # just cleanup
             self.bridge.uart.write('S')
             time.sleep_ms(20)
             s = self.bridge.uart.read()
@@ -529,14 +530,18 @@ class Bridge:
                 print('UART({0})->TCP({1}) {2}'.format(self.uart_port,
                                                        self.bind_port, data))
                 if self.client is not None:
-                    self.client.sendall("{}[{:3.2f}]\n\r".format(data, tempsensor.getTemperature()))
+                    #self.client.sendall("{}[{:3.2f}]\n\r".format(data, tempsensor.getTemperature()))
+                    self.client.sendall(data)
                 self.simulator.isCommandMode = self.simulator.isSystemInCommandMode(data)
                 #self.client.sendall(data)
         except Exception as e:
             self.simulator.logConsoles(str(e))
             self.simulator.log(str(e))
             sys.print_exception(e)
-            
+
+    def xhandle(self, fd):
+        print('Client ', self.client_address, ' disconnected')
+        self.close_client()
              
     def close_client(self):
         if self.client is not None:
@@ -545,8 +550,9 @@ class Bridge:
             self.client = None
             self.client_address = None
         if self.uart is not None:
+            pass
 #            self.uart.deinit()
-            self.uart = None
+#            self.uart = None
 
     def open_uart(self):
         self.uart = UART(self.config['uart'])
@@ -603,13 +609,15 @@ class S2NServer:
 
                 if self.simulator.flagSimRun == 1:
                     self.simulator.sendData()
-                    
+
                 if self.simulator.flagExit == 1:
                     return
 
                 if xlist:
-                    print('Errors. bailing out')
-                    continue
+                    print('xlist')
+                    for fd in xlist:
+                        for bridge in bridges:
+                            bridge.xhandle(fd)
                 if rlist:
                     for fd in rlist:
                         for bridge in bridges:
