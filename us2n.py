@@ -363,6 +363,7 @@ class Simulator:
 #                if self.linecount == 0 or self.linecount % 1000 == 0:
 #                    self.log('Run:{} Line:{}'.format(self.simrun, self.linecount))
 
+            tempsensor.getTemperature() # just to keep updating
             self.flagSendData = 0
         except Exception as e: # most likely due to conversion error in data
             self.logConsoles(str(e))
