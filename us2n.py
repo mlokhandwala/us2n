@@ -116,7 +116,7 @@ class Simulator:
             url += "&field2={}".format(time.time() - self.simrecordedtime)
 
             url += "&field6={}".format(self.linecount)
-            url += "&field7={}".format(self.parsesys()) # Get system info
+            url += "&field7={}".format(self.system_sys_dump) # Record last known system info
             self.simrecordedtime = time.time() # We record time difference only so that we can add them in summary
 
             if field3 is not None:
@@ -152,16 +152,21 @@ class Simulator:
             self.log(str(e))
             sys.print_exception(e)
 
-    def notify(self):    
+    def notify(self, type='Reboot'):
         import urequests as requests
 
         try:
-            if self.notifyurl is None:
-                return
+            response = None
 
-            response = requests.get(self.notifyurl)
-            print(response.status_code)
-            response.close()
+            if type == 'Reboot' and self.notifyurl is not None:
+                response = requests.get(self.notifyurl)
+
+            if type == 'Fault' and self.notifyfaulturl is not None:
+                response = requests.get(self.notifyfaulturl)
+
+            if response is not None:
+                print(response.status_code)
+                response.close()
         except Exception as e:
             self.log(str(e))
             sys.print_exception(e)
@@ -209,6 +214,9 @@ class Simulator:
         self.simrecordedtime = time.time()
         self.server = server
         self.isCommandMode = False
+        self.system_fault_flags = 0
+        self.system_sys_dump = None
+
         self.inFileName = config.setdefault('simdata', 'ecu.data')
         self.BrakePinNo = int(config.setdefault('brakepin', 0))
         if self.BrakePinNo != 0:
@@ -218,6 +226,7 @@ class Simulator:
 
         self.notifyurl = config.setdefault('notifyurl', None)
         self.recorderurl = config.setdefault('recorderurl', None)
+        self.notifyfaulturl = config.setdefault('faulturl', None)
         self.autostartsim = config.setdefault('autostartsim', 0)
         self.recordinterval = config.setdefault('recordinterval', 5)
 
@@ -233,25 +242,34 @@ class Simulator:
     def timerTickHandler(self, timer):
         if self.flagSimRun == 1:
             self.flagSendData = 1
+
+            self.recordtickcounter += 1
+            if self.recordtickcounter >= (self.TIMER_MINUTE * self.recordinterval) and self.flagSimRun == 1:
+                self.system_sys_dump = self.parsesys()
+                self.record(None if self.system_fault_flags == 0 else 'System Fault')
+                if self.system_fault_flags != 0:
+                    self.stopSimulator()
+                    self.notify(type='Fault')
+
+                self.recordtickcounter = 0 # Reset for next trigger
+
         elif self.bridge.uart is not None:
             if self.flagCommandMode == 1:
                 self.bridge.uart.write(self.keepAwakeCommand)
                 
-        self.recordtickcounter += 1
-        if self.recordtickcounter >= (self.TIMER_MINUTE * self.recordinterval) and self.flagSimRun == 1:
-            self.record()
-            self.recordtickcounter = 0 # Reset for next trigger
+
 
     def startSimulation(self):
         if self.bridge.uart is None: # for autostart without client
             self.bridge.open_uart()
 
         self.slowSendData(gEnterCommandMode)
-        self.flagCommandMode = 1
+
         self.flagSimRun = 1
         self.recordtickcounter = 0
-        print("flagSimRun, flagCommandMode = 1")
+        print("flagSimRun={}, flagCommandMode={}".format(self.flagSimRun, self.flagCommandMode))
         self.simstarttime = time.time()
+        self.parsesys()
         self.record(field3='SimStarted')
 
     def startSimulator(self, bridge):
@@ -281,19 +299,22 @@ class Simulator:
 
         self.log('Simulation Run Started:{}'.format(self.simrun))
         self.notify()
+        self.parsesys()
         self.record(field3='Server Started')
 
         if self.autostartsim == 1:
             self.startSimulation()
 
     def stopSimulator(self):
-        if(self.timer != None):
-            self.timer.deinit()
+#        if(self.timer != None):
+#            self.timer.deinit()
+        self.flagSimRun = 0
+        print("flagSimRun={}, flagCommandMode={}".format(self.flagSimRun, self.flagCommandMode))
 
         self.timer = None
 
 
-    def reRunSimulator(self):
+    def reRunSimulatorInput(self):
         self.inFile.seek(0, 0)
 
 #        self.log('Simulation Run End, Line Count: ' + str(self.linecount))
@@ -334,7 +355,7 @@ class Simulator:
             #self.logConsoles('X:' + line) #debug
 
             if(line == ''):
-                self.reRunSimulator()
+                self.reRunSimulatorInput()
                 return
 
             data = self.expr.split(line)
@@ -393,12 +414,19 @@ class Simulator:
             ms = re.search(r'MS:(\d*)', st); ms = None if ms is None else ms.group(1)
             stl = re.search(r'ST:(\d*)', st); stl = None if stl is None else stl.group(1)
             tic = re.search(r'S\d* (\d+)', st); tic = None if tic is None else tic.group(1)
+            faultflags = re.search(r': F([A-F0-9]+)', st); faultflags = None if faultflags is None else faultflags.group(1)
 
-            return '{}_{}_{}_{}_{}_{}_{}_{}'.format(temp, pt, rt, bpd, bpr, ms, stl, tic)
+            self.system_fault_flags = 0 if faultflags is None else int(faultflags, 16)
+
+            return '{}_{}_{}_{}_{}_{}_{}_{}_{}'.format(temp, pt, rt, bpd, bpr, ms, stl, faultflags, tic)
         except Exception as e:
             self.logConsoles(str(e))
             self.log(str(e))
             sys.print_exception(e)
+
+    def close(self):
+        if self.timer is not None:
+            self.timer.deinit()
 
 def print(*args, **kwargs):
     if VERBOSE:
@@ -479,6 +507,8 @@ class Bridge:
                 print("flagExit = 1")
                 self.simulator.flagExit = 1
                 self.simulator.record(field3='ServerExit')
+                self.simulator.close()
+                self.close()
                 return True
             elif data.find('|ViewLog') != -1: #View Log file 
                 self.simulator.viewLog()
@@ -571,6 +601,9 @@ class Bridge:
             print('Closing TCP server {0}...'.format(self.address))
             self.tcp.close()
             self.tcp = None
+        if self.uart is not None:
+            self.uart.deinit()
+            self.uart = None
 
 
 
