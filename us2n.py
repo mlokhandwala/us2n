@@ -17,7 +17,7 @@ import sys
 print_ = print
 VERBOSE = 1
 
-gEnterCommandMode = 'XXXXXXXXXXX'
+gEnterCommandMode = 'yYYu' #'XXXXXXXXXXX'
 
 class RingBuffer:
     def __init__(self, size):
@@ -263,7 +263,7 @@ class Simulator:
         if self.bridge.uart is None: # for autostart without client
             self.bridge.open_uart()
 
-        self.slowSendData(gEnterCommandMode)
+        #self.slowSendData(gEnterCommandMode)
 
         self.flagSimRun = 1
         self.recordtickcounter = 0
@@ -346,8 +346,8 @@ class Simulator:
             if(self.inFile is None):
                 return
 
-            if self.isCommandMode == False:         # Redundant for safety
-                self.slowSendData(gEnterCommandMode)
+#            if self.isCommandMode == False:         # Redundant for safety
+#                self.slowSendData(gEnterCommandMode)
 
             line = self.inFile.readline(100)
             self.linecount += 1
@@ -620,6 +620,10 @@ class S2NServer:
             self._serve_forever()
         except KeyboardInterrupt:
             print('Ctrl-C pressed or Exit Command Recieved.')
+        except Exception as e:
+            sys.print_exception(e)
+        except:
+            print('Unknown exception, exiting!')
 
     def bind(self):
         bridges = []
