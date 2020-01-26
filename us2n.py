@@ -17,7 +17,8 @@ import sys
 print_ = print
 VERBOSE = 1
 
-gEnterCommandMode = 'yYYu' #'XXXXXXXXXXX'
+gEnterCommandMode = 'XXXXXXXXXXX'
+gLogEnabledMode = 'yYY' #'yYYu' #'XXXXXXXXXXX'
 
 class RingBuffer:
     def __init__(self, size):
@@ -263,7 +264,7 @@ class Simulator:
         if self.bridge.uart is None: # for autostart without client
             self.bridge.open_uart()
 
-        #self.slowSendData(gEnterCommandMode)
+        self.slowSendData(gLogEnabledMode)
 
         self.flagSimRun = 1
         self.recordtickcounter = 0
@@ -522,7 +523,10 @@ class Bridge:
             elif data.find('|M') != -1: #Mock Data
                 command = data.split('|M')[1][:12] 
                 self.simulator.slowSendData(command)
-                return True                
+                return True
+            elif data.find('|L') != -1: #Log Enable
+                self.simulator.slowSendData(gLogEnabledMode)
+                return True
         except Exception as e:
             self.simulator.logConsoles(str(e))
             self.simulator.log(str(e))
