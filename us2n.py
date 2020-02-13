@@ -496,8 +496,8 @@ class Bridge:
                 return True
             if data.find('|C') != -1: # Command mode, just enter it on device
                 self.simulator.slowSendData(gEnterCommandMode)
-                self.simulator.flagCommandMode = 1 if self.simulator.flagCommandMode == 0 else 0
-                print("flagCommandMode = " + str(self.simulator.flagCommandMode))
+                #self.simulator.flagCommandMode = 1 if self.simulator.flagCommandMode == 0 else 0
+                #print("flagCommandMode = " + str(self.simulator.flagCommandMode))
                 return True
             elif data.find('|T') != -1: # sTop
                 print("flagSimRun = 0")
