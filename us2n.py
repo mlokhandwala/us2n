@@ -41,7 +41,7 @@ class Temperature:
     
     def __init__(self):
         self.adcP1 = ADC(Pin(33))          # create ADC object on ADC pin
-        self.adcP1.atten(ADC.ATTN_11DB)    # set 11dB input attenuation (voltage range roughly 0.0v - 3.6v)
+        self.adcP1.atten(ADC.ATTN_0DB)    # set 11dB input attenuation (voltage range roughly 0.0v - 3.6v)
         self.adcP1.width(ADC.WIDTH_12BIT)   # set 9 bit return values (returned range 0-511)
         
         self.several = RingBuffer(10)
@@ -49,7 +49,7 @@ class Temperature:
 
     def getTemperature(self):
         raw = self.adcP1.read()
-        voltage = (raw / 1.13) # from observation & calculation. 290mV gives 240 reading but 1.5V gives 1700 reading. 4096 / 3600 also = 1.13 so using that
+        voltage = (raw / 3.72) # from observation & calculation.
         tempC = voltage * 0.1
         
         #if 'several' in vars(Temperature):
