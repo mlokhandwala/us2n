@@ -7,6 +7,35 @@
 
 config = None
 
+
+class MAX6675Temperature:
+
+
+    def __init__(self):
+        from machine import SPI, Pin
+
+        self.spi = SPI(1, baudrate=4000000, polarity=1, phase=0, bits=8, firstbit=SPI.MSB, sck=Pin(14), mosi=Pin(13), miso=Pin(12))
+        self.cs = Pin(27, Pin.OUT)
+        self.cs.on()
+        self.tempC = 0
+
+
+    def getTemperature(self):
+        self.cs.off()
+
+        result = self.spi.read(2)
+        result = result[0] << 8 | result[1]
+        result >>= 4
+        self.tempC = result & 0b0000111111111111 # 12 LSB after we have shifted it
+
+        return self.tempC
+
+    def startConversion(self):
+        self.cs.off()
+        self.cs.on()
+
+
+
 def _slowSendData(uart, text):
     import time
     for c in text:
@@ -241,3 +270,11 @@ def aon():
     configset('autostartsim', 1)
     print('Auto Start Sim ON')
     return
+
+def mt():
+    import time
+    sensor = MAX6675Temperature()
+    sensor.startConversion()
+    time.sleep_ms(200) # conversion time
+    return sensor.getTemperature()
+

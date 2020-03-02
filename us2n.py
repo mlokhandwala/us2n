@@ -36,8 +36,34 @@ class RingBuffer:
     def get(self):
         return self.data
 
+class MAX6675Temperature:
+
+    def __init__(self):
+        from machine import SPI, Pin
+
+        self.spi = SPI(1, baudrate=4000000, polarity=1, phase=0, bits=8, firstbit=SPI.MSB, sck=Pin(14), mosi=Pin(13), miso=Pin(12))
+        self.cs = Pin(27, Pin.OUT)
+        self.cs.on()
+        self.tempC = 0
+
+
+    def getTemperature(self):
+        self.cs.off()
+
+        result = self.spi.read(2)
+        result = result[0] << 8 | result[1]
+        result >>= 4
+        self.tempC = result & 0b0000111111111111 # 12 LSB after we have shifted it
+
+        return self.tempC
+
+    def startConversion(self):
+#        self.cs.off() #Not using this as we can call startConversion many times for the same comversion
+        self.cs.on()
+
+
+
 class Temperature:
-    
     
     def __init__(self):
         self.adcP1 = ADC(Pin(33))          # create ADC object on ADC pin
@@ -113,7 +139,10 @@ class Simulator:
                 return
 
             url = self.recorderurl
-            url += "&field1={}".format(tempsensor.getAvTemp())
+            if self.Max6675 == 1:
+                url += "&field1={}".format(self.maxTemperature.getTemperature())
+            else:
+                url += "&field1={}".format(tempsensor.getAvTemp())
             url += "&field2={}".format(time.time() - self.simrecordedtime)
 
             url += "&field6={}".format(self.linecount)
@@ -230,6 +259,11 @@ class Simulator:
         self.notifyfaulturl = config.setdefault('faulturl', None)
         self.autostartsim = config.setdefault('autostartsim', 0)
         self.recordinterval = config.setdefault('recordinterval', 5)
+        self.Max6675 = config.setdefault('Max6675', 0)
+
+        if self.Max6675 == 1:
+            self.maxTemperature = MAX6675Temperature()
+
 
         try:
             ntptime.settime()
@@ -245,6 +279,12 @@ class Simulator:
             self.flagSendData = 1
 
             self.recordtickcounter += 1
+
+            if self.recordtickcounter == ((self.TIMER_MINUTE * self.recordinterval) - 6) \
+                and self.flagSimRun == 1 and self.Max6675 == 1: #6 = 300ms (6 * 50ms)
+                self.maxTemperature.startConversion()
+
+
             if self.recordtickcounter >= (self.TIMER_MINUTE * self.recordinterval) and self.flagSimRun == 1:
                 self.system_sys_dump = self.parsesys()
                 self.record(None if self.system_fault_flags == 0 else 'System Fault')
@@ -321,6 +361,8 @@ class Simulator:
 #        self.log('Simulation Run End, Line Count: ' + str(self.linecount))
         self.simrun += 1
         self.linecount = 0
+
+        self.slowSendData('S') # Log System Status
 
         if self.bridge.client is not None:
             self.bridge.client.sendall('Simulation Run Started:{}'.format(self.simrun))
