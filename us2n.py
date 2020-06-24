@@ -291,6 +291,7 @@ class Simulator:
                 if self.system_fault_flags != 0:
                     self.stopSimulator()
                     self.notify(type='Fault')
+                    self.slowSendData('y')  # prevent unnecessary logging.
 
                 self.recordtickcounter = 0 # Reset for next trigger
 
