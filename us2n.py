@@ -41,7 +41,7 @@ class MAX6675Temperature:
     def __init__(self):
         from machine import SPI, Pin
 
-        self.spi = SPI(1, baudrate=4000000, polarity=1, phase=0, bits=8, firstbit=SPI.MSB, sck=Pin(14), mosi=Pin(13), miso=Pin(12))
+        self.spi = SPI(1, baudrate=2000000, polarity=1, phase=0, bits=8, firstbit=SPI.MSB, sck=Pin(14), mosi=Pin(13), miso=Pin(12))
         self.cs = Pin(27, Pin.OUT)
         self.cs.on()
         self.tempC = 0
@@ -105,6 +105,8 @@ class Simulator:
     logfile = None
 
     flagSimRun = 0
+    flagFastSimRun = 0
+    FastSimLastCmdTime = 0
 
     server = None
     flagCommandMode = 0
@@ -113,9 +115,9 @@ class Simulator:
 
     TIMER_INTERVAL = 50 #ms
     TIMER_MINUTE = 60 * 1000 / TIMER_INTERVAL
+    TIMER_FAST_SIM_COUNT = 2000 / TIMER_INTERVAL # 2 seconds
     
     keepAwakeCommand = '\\' # \ = Invalid commnand, Just to keep awake
-    
 
     def log(self, message):
         try:
@@ -241,6 +243,9 @@ class Simulator:
         self.simrun = 0
         self.linecount = 0
         self.recordtickcounter = 0
+        self.fastSimCounter = 0
+        self.flagFastSimRun = 0
+        self.flagFastSimPinValue = 0
         self.simrecordedtime = time.time()
         self.server = server
         self.isCommandMode = False
@@ -278,14 +283,18 @@ class Simulator:
         if self.flagSimRun == 1:
             self.flagSendData = 1
 
+        if self.flagFastSimRun == 1:
+            self.fastSimCounter += 1
+
+        if self.flagSimRun == 1 or self.flagFastSimRun == 1:
+
             self.recordtickcounter += 1
 
-            if self.recordtickcounter == ((self.TIMER_MINUTE * self.recordinterval) - 6) \
-                and self.flagSimRun == 1 and self.Max6675 == 1: #6 = 300ms (6 * 50ms)
+            if self.Max6675 == 1 and \
+               self.recordtickcounter == ((self.TIMER_MINUTE * self.recordinterval) - 6):  # 6 = 300ms (6 * 50ms), datasheet->220ms maximum
                 self.maxTemperature.startConversion()
 
-
-            if self.recordtickcounter >= (self.TIMER_MINUTE * self.recordinterval) and self.flagSimRun == 1:
+            if self.recordtickcounter >= (self.TIMER_MINUTE * self.recordinterval):
                 self.system_sys_dump = self.parsesys()
                 self.record(None if self.system_fault_flags == 0 else 'System Fault')
                 if self.system_fault_flags != 0:
@@ -293,13 +302,11 @@ class Simulator:
                     self.notify(type='Fault')
                     self.slowSendData('y')  # prevent unnecessary logging.
 
-                self.recordtickcounter = 0 # Reset for next trigger
+                self.recordtickcounter = 0  # Reset for next trigger
 
         elif self.bridge.uart is not None:
             if self.flagCommandMode == 1:
                 self.bridge.uart.write(self.keepAwakeCommand)
-                
-
 
     def startSimulation(self):
         if self.bridge.uart is None: # for autostart without client
@@ -330,9 +337,7 @@ class Simulator:
         self.bridge = bridge
         self.expr = re.compile(',')
 
-        if(self.timer == None):
-            self.timer = Timer(-1)
-            self.timer.init(period=50, mode=Timer.PERIODIC, callback=self.timerTickHandler)
+        self.start_timer()
 
         self.simrun += 1
 
@@ -346,6 +351,11 @@ class Simulator:
 
         if self.autostartsim == 1:
             self.startSimulation()
+
+    def start_timer(self):
+        if (self.timer == None):
+            self.timer = Timer(-1)
+            self.timer.init(period=50, mode=Timer.PERIODIC, callback=self.timerTickHandler)
 
     def stopSimulator(self):
 #        if(self.timer != None):
@@ -381,6 +391,20 @@ class Simulator:
             return True
         else:
             return False
+
+    def fastSim(self):
+        if self.fastSimCounter > self.TIMER_FAST_SIM_COUNT:
+            self.fastSimCounter = 0
+
+            if self.flagFastSimPinValue == 0:
+                self.BrakePin.on()
+                self.flagFastSimPinValue = 1
+            else:
+                self.BrakePin.off()
+                self.flagFastSimPinValue = 0
+
+            self.logConsoles('BrakePin = ' + str(self.flagFastSimPinValue) + "\n")
+        return
 
     def sendData(self):
         try:
@@ -537,14 +561,20 @@ class Bridge:
             if data.find('|S') != -1: # Simulate
                 self.simulator.startSimulation()
                 return True
+            if data.find('|F') != -1: # Toggle Fast Simulation Flag
+                self.simulator.flagFastSimRun = 1
+                self.simulator.start_timer()  # Timer required
+                self.simulator.logConsoles('flagFastSim = ' + str(self.simulator.flagFastSimRun) + "\n")
+                return True
             if data.find('|C') != -1: # Command mode, just enter it on device
                 self.simulator.slowSendData(gEnterCommandMode)
                 #self.simulator.flagCommandMode = 1 if self.simulator.flagCommandMode == 0 else 0
                 #print("flagCommandMode = " + str(self.simulator.flagCommandMode))
                 return True
             elif data.find('|T') != -1: # sTop
-                print("flagSimRun = 0")
+                print("flagSimRun = 0, flagFastSimRun = 0")
                 self.simulator.flagSimRun = 0
+                self.simulator.flagFastSimRun = 0
                 self.simulator.record(field3='SimStopped')
                 return True
             elif data.find('|E') != -1: #Exit
@@ -694,6 +724,8 @@ class S2NServer:
 
                 if self.simulator.flagSimRun == 1:
                     self.simulator.sendData()
+                if self.simulator.flagFastSimRun == 1:
+                    self.simulator.fastSim()
 
                 if self.simulator.flagExit == 1:
                     return
