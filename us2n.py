@@ -114,8 +114,8 @@ class Simulator:
     BrakePin = None
 
     TIMER_INTERVAL = 50 #ms
-    TIMER_MINUTE = 60 * 1000 / TIMER_INTERVAL
-    TIMER_FAST_SIM_COUNT = 2000 / TIMER_INTERVAL # 2 seconds
+    TIMER_MINUTE = int(60 * 1000 / TIMER_INTERVAL)
+    TIMER_FAST_SIM_COUNT = int(2000 / TIMER_INTERVAL) # 2 seconds
     
     keepAwakeCommand = '\\' # \ = Invalid commnand, Just to keep awake
 
@@ -265,6 +265,7 @@ class Simulator:
         self.autostartsim = config.setdefault('autostartsim', 0)
         self.recordinterval = config.setdefault('recordinterval', 5)
         self.Max6675 = config.setdefault('Max6675', 0)
+        self.TIMER_FAST_SIM_COUNT = int(config.setdefault('fastms', 3000)) / self.TIMER_INTERVAL
 
         if self.Max6675 == 1:
             self.maxTemperature = MAX6675Temperature()
@@ -404,6 +405,11 @@ class Simulator:
                 self.flagFastSimPinValue = 0
 
             self.logConsoles('BrakePin = ' + str(self.flagFastSimPinValue) + "\n")
+
+        command = ("`{:04d} {:03d} {:01d} ".format(950 + int(self.TIMER_FAST_SIM_COUNT), 49,
+                                                   self.flagFastSimPinValue))  # space between fields to allow placing null to split string in recieving code.
+        self.slowSendData(command)
+
         return
 
     def sendData(self):
@@ -634,7 +640,12 @@ class Bridge:
                     print('Client ', self.client_address, ' disconnected')
                     self.close_client()
             elif fd == self.uart:
-                data = self.uart.read()
+                data = b""
+                count = 0
+                while self.uart.any() > 0 and count < 5:  # count for safety preventing infinite loop
+                    data += self.uart.read()
+                    count += 1
+
                 print('UART({0})->TCP({1}) {2}'.format(self.uart_port,
                                                        self.bind_port, data))
                 if self.client is not None:
@@ -777,7 +788,8 @@ def WLANStation(config, name):
             print('Failed to connect wifi station after {0}ms. I give up'
                   .format(t))
             return sta
-    print('Wifi station connected as {0}'.format(sta.ifconfig()))
+    sta.config(dhcp_hostname=name)
+    print('Wifi station connected as {0} name {1}'.format(sta.ifconfig(), name))
     return sta
 
 
