@@ -191,7 +191,7 @@ class Simulator:
             response = None
 
             if type == 'Reboot' and self.notifyurl is not None:
-                response = requests.get(self.notifyurl)
+                response = requests.get(self.notifyurl + "&IP=" + self.bridge.address)
 
             if type == 'Fault' and self.notifyfaulturl is not None:
                 response = requests.get(self.notifyfaulturl)
@@ -245,6 +245,7 @@ class Simulator:
         self.recordtickcounter = 0
         self.fastSimCounter = 0
         self.flagFastSimRun = 0
+        self.flagSimHold = 0;
         self.flagFastSimPinValue = 0
         self.simrecordedtime = time.time()
         self.server = server
@@ -281,10 +282,10 @@ class Simulator:
         self.logConsoles("Simulation File Name: {0}".format(self.inFileName))
 
     def timerTickHandler(self, timer):
-        if self.flagSimRun == 1:
+        if self.flagSimRun == 1  and self.simulator.flagSimHold == 0:
             self.flagSendData = 1
 
-        if self.flagFastSimRun == 1:
+        if self.flagFastSimRun == 1  and self.simulator.flagSimHold == 0:
             self.fastSimCounter += 1
 
         if self.flagSimRun == 1 or self.flagFastSimRun == 1:
@@ -316,6 +317,7 @@ class Simulator:
         self.slowSendData(gLogEnabledMode)
 
         self.flagSimRun = 1
+        self.flagSimHold == 0
         self.recordtickcounter = 0
         print("flagSimRun={}, flagCommandMode={}".format(self.flagSimRun, self.flagCommandMode))
         self.simstarttime = time.time()
@@ -569,6 +571,7 @@ class Bridge:
                 return True
             if data.find('|F') != -1: # Toggle Fast Simulation Flag
                 self.simulator.flagFastSimRun = 1
+                self.simulator.flagSimHold = 0
                 self.simulator.start_timer()  # Timer required
                 self.simulator.logConsoles('flagFastSim = ' + str(self.simulator.flagFastSimRun) + "\n")
                 return True
@@ -576,6 +579,11 @@ class Bridge:
                 self.simulator.slowSendData(gEnterCommandMode)
                 #self.simulator.flagCommandMode = 1 if self.simulator.flagCommandMode == 0 else 0
                 #print("flagCommandMode = " + str(self.simulator.flagCommandMode))
+                return True
+            elif data.find('|H') != -1:  # Hold
+                print("flagSimHold = 1")
+                self.simulator.flagSimHold = 1
+                self.simulator.record(field3='SimHold')
                 return True
             elif data.find('|T') != -1: # sTop
                 print("flagSimRun = 0, flagFastSimRun = 0")
