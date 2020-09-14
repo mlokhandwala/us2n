@@ -247,7 +247,7 @@ class Simulator:
         self.recordtickcounter = 0
         self.fastSimCounter = 0
         self.flagFastSimRun = 0
-        self.flagSimHold = 0;
+        self.flagSimHold = 0
         self.flagFastSimPinValue = 0
         self.simrecordedtime = time.time()
         self.server = server
@@ -284,10 +284,10 @@ class Simulator:
         self.logConsoles("Simulation File Name: {0}".format(self.inFileName))
 
     def timerTickHandler(self, timer):
-        if self.flagSimRun == 1  and self.simulator.flagSimHold == 0:
+        if self.flagSimRun == 1 and self.flagSimHold == 0:
             self.flagSendData = 1
 
-        if self.flagFastSimRun == 1  and self.simulator.flagSimHold == 0:
+        if self.flagFastSimRun == 1 and self.flagSimHold == 0:
             self.fastSimCounter += 1
 
         if self.flagSimRun == 1 or self.flagFastSimRun == 1:
@@ -319,7 +319,7 @@ class Simulator:
         self.slowSendData(gLogEnabledMode)
 
         self.flagSimRun = 1
-        self.flagSimHold == 0
+        self.flagSimHold = 0
         self.recordtickcounter = 0
         print("flagSimRun={}, flagCommandMode={}".format(self.flagSimRun, self.flagCommandMode))
         self.simstarttime = time.time()
