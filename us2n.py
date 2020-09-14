@@ -191,8 +191,10 @@ class Simulator:
             response = None
 
             if type == 'Reboot' and self.notifyurl is not None:
-                response = requests.get(self.notifyurl + "&IP=" + self.bridge.address)
-
+                #response = requests.get(self.notifyurl + "&IP=" + str(self.bridge.address))
+                sta_if = network.WLAN(network.STA_IF)
+                #print(self.notifyurl + "&IP=" + str(sta_if.ifconfig()[0]))
+                response = requests.get(self.notifyurl + "&IP=" + str(sta_if.ifconfig()[0]))
             if type == 'Fault' and self.notifyfaulturl is not None:
                 response = requests.get(self.notifyfaulturl)
 
